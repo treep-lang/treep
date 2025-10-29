@@ -1,0 +1,15 @@
+const xs = [1, 2, 3]
+const m  = { "a": 1, "b": 2 }
+
+def demo() returns: Int {
+  let s = 0
+  s = s + xs.length()
+  s = s + xs.head()
+  s = s + xs.tail().length()
+  s = s + m.size()
+  for (p in: m.entries()) { s = s + snd(p) }
+  return s
+}
+
+def main() returns: Int { return demo() }
+

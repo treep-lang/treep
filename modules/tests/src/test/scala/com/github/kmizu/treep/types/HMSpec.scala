@@ -47,4 +47,15 @@ class HMSpec extends FunSuite {
     val ty = r.toOption.get.ty
     assert(ty.isInstanceOf[Type.TIter])
   }
+
+  test("record-like dict with string keys supports field access via row polymorphism") {
+    // { "x": 1, "y": 2 }.x : Int
+    val rec = Element("dict", children = List(
+      Element("pair", children = List(Element("string", attrs = List(Attr("value","x"))), Element("int", attrs = List(Attr("value","1"))))) ,
+      Element("pair", children = List(Element("string", attrs = List(Attr("value","y"))), Element("int", attrs = List(Attr("value","2")))))
+    ))
+    val expr = Element("field", attrs = List(Attr("name","x")), children = List(rec))
+    val res = HM.inferExpr(HM.builtinEnv, expr)
+    assert(res.isRight)
+  }
 }

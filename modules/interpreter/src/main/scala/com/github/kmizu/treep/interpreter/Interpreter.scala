@@ -15,6 +15,7 @@ object Interpreter:
   final case class VIter(private val data: List[Value], private var ix: Int) extends Value:
     def hasNext: Boolean = ix < data.length
     def next(): Value = { val r = data(ix); ix += 1; r }
+    def remaining: List[Value] = data.drop(ix)
   final case class VTuple2(a: Value, b: Value) extends Value
   final case class VFunc(params: List[String], body: Element, env: Env) extends Value
 
@@ -187,19 +188,46 @@ object Interpreter:
         // List methods
         case ("push", VList(xs), List(v)) => VList(xs :+ v)
         case ("iter", VList(xs), Nil) => VIter(xs, 0)
+        case ("length", VList(xs), Nil) => VInt(xs.length)
+        case ("head", VList(xs), Nil) => xs.headOption.getOrElse(VUnit)
+        case ("tail", VList(xs), Nil) => VList(if xs.nonEmpty then xs.tail else Nil)
+        case ("append", VList(xs), List(v)) => VList(xs :+ v)
+        case ("concat", VList(xs), List(VList(ys))) => VList(xs ++ ys)
         // Dict methods
         case ("hasKey", VDict(m), List(k)) => VBool(m.contains(k))
         case ("keys", VDict(m), Nil) => VList(m.keys.toList)
         case ("get", VDict(m), List(k)) => m.getOrElse(k, VUnit)
         case ("iter", VDict(m), Nil) => VIter(m.toList.map { case (k, v) => VTuple2(k, v) }, 0)
+        case ("size", VDict(m), Nil) => VInt(m.size)
+        case ("values", VDict(m), Nil) => VList(m.values.toList)
+        case ("entries", VDict(m), Nil) => VList(m.toList.map { case (k, v) => VTuple2(k, v) })
+        case ("put", VDict(m), List(k, v)) => VDict(m.updated(k, v))
+        case ("remove", VDict(m), List(k)) => VDict(m - k)
+        case ("getOrElse", VDict(m), List(k, d)) => m.getOrElse(k, d)
         // Iter methods
         case ("hasNext", it: VIter, Nil) => VBool(it.hasNext)
         case ("next", it: VIter, Nil) => it.next()
+        case ("toList", it: VIter, Nil) => VList(it.remaining)
         case _ =>
+          // Record-style method: field function under string key
+          recv match
+            case VDict(m) =>
+              m.get(VString(name)) match
+                case Some(fn: VFunc) =>
+                  val arity = fn.params.length
+                  if arity == args.length + 1 then callFunc(fn, recv :: args)
+                  else if arity == args.length then callFunc(fn, args)
+                  else throw new RuntimeException(s"method arity mismatch: ${name}")
+                case _ =>
+                  // Fallback: treat as function(name) with (recv :: args)
+                  env.get(name) match
+                    case Some(fn: VFunc) => callFunc(fn, recv :: args)
+                    case _ => throw new RuntimeException(s"unknown method: ${name}")
+            case _ =>
           // Fallback: treat as function(name) with (recv :: args)
-          env.get(name) match
-            case Some(fn: VFunc) => callFunc(fn, recv :: args)
-            case _ => throw new RuntimeException(s"unknown method: ${name}")
+              env.get(name) match
+                case Some(fn: VFunc) => callFunc(fn, recv :: args)
+                case _ => throw new RuntimeException(s"unknown method: ${name}")
     case other => VUnit
 
   private def evalCall(env: Env, name: String, args: List[Value]): Value = name match

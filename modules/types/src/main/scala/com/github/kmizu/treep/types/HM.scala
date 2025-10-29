@@ -80,8 +80,9 @@ object HM:
       for
         Result(s1, tT) <- inferExpr(env, tgt)
         tv = fresh()
-        sD <- Infer.unify(tT, T.TDict(T.TString, tv))
-      yield Result(sD.compose(s1), sD.apply(tv))
+        // Prefer record: { key: tv | ρ }
+        sRec <- Infer.unify(s1.apply(tT), T.TRecord(Map(key -> tv), Some(999999)))
+      yield Result(sRec.compose(s1), sRec.apply(tv))
     case "list"   =>
       val init: Either[TypeError, (Subst, Option[T])] = Right(Subst.empty, None)
       val res = e.children.foldLeft(init) { case (accE, ch) =>
@@ -115,6 +116,30 @@ object HM:
             }
             (sC, elem) <- choice
           yield Result(sC.compose(sArgs), T.TIter(elem))
+        case "length" =>
+          val a = fresh(); for sL <- Infer.unify(sArgs.apply(tR), T.TList(a)) yield Result(sL, T.TInt)
+        case "head" =>
+          val a = fresh(); for sL <- Infer.unify(sArgs.apply(tR), T.TList(a)) yield Result(sL, sL.apply(a))
+        case "tail" =>
+          val a = fresh(); for sL <- Infer.unify(sArgs.apply(tR), T.TList(a)) yield Result(sL, T.TList(sL.apply(a)))
+        case "append" =>
+          val a = fresh(); for sL <- Infer.unify(sArgs.apply(tR), T.TList(a)); sV <- if tArgs.nonEmpty then Infer.unify(sL.apply(tArgs.head), sL.apply(a)) else Right(sL) yield Result(sV, T.TList(sV.apply(a)))
+        case "concat" =>
+          val a = fresh(); val b = fresh(); for sL <- Infer.unify(sArgs.apply(tR), T.TList(a)); sB <- if tArgs.nonEmpty then Infer.unify(sL.apply(tArgs.head), T.TList(a)) else Right(sL) yield Result(sB, T.TList(sB.apply(a)))
+        case "size" =>
+          val k = fresh(); val v = fresh(); for sD <- Infer.unify(sArgs.apply(tR), T.TDict(k, v)) yield Result(sD, T.TInt)
+        case "values" =>
+          val k = fresh(); val v = fresh(); for sD <- Infer.unify(sArgs.apply(tR), T.TDict(k, v)) yield Result(sD, T.TList(sD.apply(v)))
+        case "entries" =>
+          val k = fresh(); val v = fresh(); for sD <- Infer.unify(sArgs.apply(tR), T.TDict(k, v)) yield Result(sD, T.TList(T.TTuple2(sD.apply(k), sD.apply(v))))
+        case "put" =>
+          val k = fresh(); val v = fresh(); for sD <- Infer.unify(sArgs.apply(tR), T.TDict(k, v)); sK <- if tArgs.nonEmpty then Infer.unify(sD.apply(tArgs.head), sD.apply(k)) else Right(sD); sV <- if tArgs.length>=2 then Infer.unify(sK.apply(tArgs(1)), sK.apply(v)) else Right(sK) yield Result(sV, T.TDict(sV.apply(k), sV.apply(v)))
+        case "remove" =>
+          val k = fresh(); val v = fresh(); for sD <- Infer.unify(sArgs.apply(tR), T.TDict(k, v)); sK <- if tArgs.nonEmpty then Infer.unify(sD.apply(tArgs.head), sD.apply(k)) else Right(sD) yield Result(sK, T.TDict(sK.apply(k), sK.apply(v)))
+        case "getOrElse" =>
+          val k = fresh(); val v = fresh(); for sD <- Infer.unify(sArgs.apply(tR), T.TDict(k, v)); sK <- if tArgs.nonEmpty then Infer.unify(sD.apply(tArgs.head), sD.apply(k)) else Right(sD); sDef <- if tArgs.length>=2 then Infer.unify(sK.apply(tArgs(1)), sK.apply(v)) else Right(sK) yield Result(sDef, sDef.apply(v))
+        case "toList" =>
+          val a = fresh(); for sI <- Infer.unify(sArgs.apply(tR), T.TIter(a)) yield Result(sI, T.TList(sI.apply(a)))
         case _ =>
           for
             (sArgs, tArgs) <- res
@@ -164,13 +189,20 @@ object HM:
           case "next" =>
             val a = fresh(); for sI <- Infer.unify(sA.apply(tR), T.TIter(a)) yield Result(sI, sI.apply(a))
           case _ =>
-            val init: Either[TypeError, (Subst, List[T])] = Right((sA, tR :: tArgs))
-            for
-              (sAll, allArgs) <- init
-              fT <- env.lookup(name).map(inst).toRight(TypeError.Mismatch(T.TVar(-1), T.TVar(-2)))
-              beta = fresh()
-              sFn <- Infer.unify(sAll.apply(fT), T.TFun(allArgs.map(sAll.apply), beta))
+            // Try record-style method: recv has field `name` of type (args) -> beta
+            val beta = fresh()
+            val tryRecord = Infer.unify(sA.apply(tR), T.TRecord(Map(name -> T.TFun(tArgs, beta)), Some(0))).map { sRec =>
+              Result(sRec.compose(sA), sRec.apply(beta))
+            }
+            tryRecord.orElse {
+              val init: Either[TypeError, (Subst, List[T])] = Right((sA, tR :: tArgs))
+              for
+                (sAll, allArgs) <- init
+                fT <- env.lookup(name).map(inst).toRight(TypeError.Mismatch(T.TVar(-1), T.TVar(-2)))
+                beta = fresh()
+                sFn <- Infer.unify(sAll.apply(fT), T.TFun(allArgs.map(sAll.apply), beta))
             yield Result(sFn.compose(sAll), sFn.apply(beta))
+            }
       yield out
     case other => Right(Result(Subst.empty, fresh()))
 

@@ -8,6 +8,8 @@ enum Type:
   case TDict(key: Type, value: Type)
   case TTuple2(a: Type, b: Type)
   case TIter(elem: Type)
+  // Row-polymorphic record: fields plus optional row variable id
+  case TRecord(fields: Map[String, Type], rowVar: Option[Int])
 
 final case class Scheme(vars: Set[Int], body: Type)
 
@@ -19,6 +21,7 @@ final case class Subst(map: Map[Int, Type]):
     case Type.TDict(k, v) => Type.TDict(apply(k), apply(v))
     case Type.TTuple2(a, b) => Type.TTuple2(apply(a), apply(b))
     case Type.TIter(e) => Type.TIter(apply(e))
+    case Type.TRecord(fs, rv) => Type.TRecord(fs.view.mapValues(apply).toMap, rv)
     case _ => t
 
   def compose(that: Subst): Subst =
@@ -45,6 +48,7 @@ object Types:
     case Type.TDict(k, v) => ftv(k) ++ ftv(v)
     case Type.TTuple2(a, b) => ftv(a) ++ ftv(b)
     case Type.TIter(e) => ftv(e)
+    case Type.TRecord(fs, rv) => fs.values.flatMap(ftv).toSet ++ rv.toSet
     case _ => Set.empty
 
   def ftv(s: Scheme): Set[Int] = ftv(s.body) diff s.vars
@@ -82,6 +86,22 @@ object Infer:
         s1 <- unify(a1, a2)
         s2 <- unify(s1.apply(b1), s1.apply(b2))
       yield s2.compose(s1)
+    case (Type.TRecord(fs1, rv1), Type.TRecord(fs2, rv2)) =>
+      // unify common fields; extra fields require rowVar on the other side
+      val common = fs1.keySet.intersect(fs2.keySet)
+      val only1 = fs1.keySet.diff(fs2.keySet)
+      val only2 = fs2.keySet.diff(fs1.keySet)
+      if only1.nonEmpty && rv2.isEmpty then Left(TypeError.Mismatch(t1, t2))
+      else if only2.nonEmpty && rv1.isEmpty then Left(TypeError.Mismatch(t1, t2))
+      else
+        val init: Either[TypeError, Subst] = Right(Subst.empty)
+        val uCommon = common.foldLeft(init) { (accE, k) =>
+          for
+            acc <- accE
+            s <- unify(acc.apply(fs1(k)), acc.apply(fs2(k)))
+          yield s.compose(acc)
+        }
+        uCommon
     case (Type.TFun(as1, r1), Type.TFun(as2, r2)) if as1.length == as2.length =>
       val init: Either[TypeError, Subst] = Right(Subst.empty)
       val argsUnify = as1.zip(as2).foldLeft(init) { case (accE, (x, y)) =>
