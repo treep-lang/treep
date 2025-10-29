@@ -179,6 +179,27 @@ object Interpreter:
       else
         val args = e.children.map(ch => evalExpr(env, ch))
         evalCall(env, name, args)
+    case "mcall" =>
+      val name = e.name.get
+      val recv = evalExpr(env, e.children.head)
+      val args = e.children.tail.map(ch => evalExpr(env, ch))
+      (name, recv, args) match
+        // List methods
+        case ("push", VList(xs), List(v)) => VList(xs :+ v)
+        case ("iter", VList(xs), Nil) => VIter(xs, 0)
+        // Dict methods
+        case ("hasKey", VDict(m), List(k)) => VBool(m.contains(k))
+        case ("keys", VDict(m), Nil) => VList(m.keys.toList)
+        case ("get", VDict(m), List(k)) => m.getOrElse(k, VUnit)
+        case ("iter", VDict(m), Nil) => VIter(m.toList.map { case (k, v) => VTuple2(k, v) }, 0)
+        // Iter methods
+        case ("hasNext", it: VIter, Nil) => VBool(it.hasNext)
+        case ("next", it: VIter, Nil) => it.next()
+        case _ =>
+          // Fallback: treat as function(name) with (recv :: args)
+          env.get(name) match
+            case Some(fn: VFunc) => callFunc(fn, recv :: args)
+            case _ => throw new RuntimeException(s"unknown method: ${name}")
     case other => VUnit
 
   private def evalCall(env: Env, name: String, args: List[Value]): Value = name match

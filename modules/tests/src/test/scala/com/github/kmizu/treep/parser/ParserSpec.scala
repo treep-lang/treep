@@ -47,6 +47,15 @@ class ParserSpec extends FunSuite {
     assert(ps.exists { case (k, _) => k.isInstanceOf[C.StrLit] && k.asInstanceOf[C.StrLit].value == "a" })
   }
 
+  test("method-call node: xs.push(1) -> MethodCall(recv=xs, name=push)") {
+    val src = "const r = xs.push(1)"
+    val prog = Parser.parseProgram(src)
+    val C.ConstDecl(_, _, init, _) = prog.tops.head
+    val C.MethodCall(recv, name, args) = init
+    assertEquals(name, "push")
+    assertEquals(args.length, 1)
+  }
+
   test("if/else and for-in in block") {
     val src =
       """

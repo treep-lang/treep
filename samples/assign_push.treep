@@ -1,8 +1,7 @@
 def build() returns: Int {
   let acc = []
-  for (i in: [1, 2, 3]) { acc = push(acc, i) }
+  for (i in: [1, 2, 3]) { acc = acc.push(i) }
   return acc[2]
 }
 
 def main() returns: Int { return build() }
-

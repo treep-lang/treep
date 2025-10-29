@@ -238,7 +238,21 @@ object Parser:
       var expr: Expr = parsePrimary()
       var cont = true
       while cont do
-        if at(".") then { next(); val n = ident(); expr = Field(expr, n) }
+        if at(".") then {
+          next()
+          val n = ident()
+          if at("(") then
+            // method-call node: MethodCall(recv, name, args)
+            next()
+            val as = scala.collection.mutable.ListBuffer.empty[Expr]
+            if !at(")") then
+              as += this.expr()
+              while at(",") do { next(); as += this.expr() }
+            eat(")")
+            expr = MethodCall(expr, n, as.toList)
+          else
+            expr = Field(expr, n)
+        }
         else if at("[") then { next(); val k = this.expr(); eat("]"); expr = Index(expr, k) }
         else cont = false
       expr

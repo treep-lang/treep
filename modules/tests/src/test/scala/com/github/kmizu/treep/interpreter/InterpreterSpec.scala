@@ -24,7 +24,7 @@ class InterpreterSpec extends FunSuite {
       """
       |def h() returns: Int {
       |  let acc = []
-      |  for (x in: [1,2,3]) { acc = push(acc, x) }
+      |  for (x in: [1,2,3]) { acc = acc.push(x) }
       |  return acc[2]
       |}
       |""".stripMargin

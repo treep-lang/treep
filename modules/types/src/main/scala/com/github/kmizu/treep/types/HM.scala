@@ -122,6 +122,56 @@ object HM:
             beta = fresh()
             sFn <- Infer.unify(sArgs.apply(fT), T.TFun(tArgs.map(sArgs.apply), beta))
           yield Result(sFn.compose(sArgs), sFn.apply(beta))
+    case "mcall" =>
+      val name = e.name.get
+      val recvE = e.children.head
+      val argsE = e.children.tail
+      for
+        Result(sR, tR) <- inferExpr(env, recvE)
+        // infer args under substituted env
+        resArgs <- argsE.foldLeft(Right((sR, List.empty[T])): Either[TypeError, (Subst, List[T])]) {
+          case (accE, ex) =>
+            for
+              (sAcc, ts) <- accE
+              Result(sX, tX) <- inferExpr(sAcc.applyTo(env), ex)
+            yield (sX.compose(sAcc), ts :+ tX)
+        }
+        (sA, tArgs) = resArgs
+        out <- name match
+          case "push" =>
+            val a = fresh()
+            for sL <- Infer.unify(sA.apply(tR), T.TList(a)); sV <- if tArgs.nonEmpty then Infer.unify(sL.apply(tArgs.head), sL.apply(a)) else Right(sL)
+            yield Result(sV, T.TList(sV.apply(a)))
+          case "iter" =>
+            val a = fresh(); val k = fresh(); val v = fresh()
+            // List[a] -> Iter[a], Dict[k,v] -> Iter[(k,v)]
+            val tryList = Infer.unify(sA.apply(tR), T.TList(a)).map(s => Result(s, T.TIter(s.apply(a))))
+            val tryDict = Infer.unify(sA.apply(tR), T.TDict(k, v)).map(s => Result(s, T.TIter(T.TTuple2(s.apply(k), s.apply(v)))))
+            tryList.orElse(tryDict)
+          case "hasKey" =>
+            val k = fresh(); val v = fresh()
+            for sD <- Infer.unify(sA.apply(tR), T.TDict(k, v)); sK <- if tArgs.nonEmpty then Infer.unify(sD.apply(tArgs.head), sD.apply(k)) else Right(sD)
+            yield Result(sK, T.TBool)
+          case "keys" =>
+            val k = fresh(); val v = fresh()
+            for sD <- Infer.unify(sA.apply(tR), T.TDict(k, v)) yield Result(sD, T.TList(sD.apply(k)))
+          case "get" =>
+            val k = fresh(); val v = fresh()
+            for sD <- Infer.unify(sA.apply(tR), T.TDict(k, v)); sK <- if tArgs.nonEmpty then Infer.unify(sD.apply(tArgs.head), sD.apply(k)) else Right(sD)
+            yield Result(sK, sK.apply(v))
+          case "hasNext" =>
+            val a = fresh(); for sI <- Infer.unify(sA.apply(tR), T.TIter(a)) yield Result(sI, T.TBool)
+          case "next" =>
+            val a = fresh(); for sI <- Infer.unify(sA.apply(tR), T.TIter(a)) yield Result(sI, sI.apply(a))
+          case _ =>
+            val init: Either[TypeError, (Subst, List[T])] = Right((sA, tR :: tArgs))
+            for
+              (sAll, allArgs) <- init
+              fT <- env.lookup(name).map(inst).toRight(TypeError.Mismatch(T.TVar(-1), T.TVar(-2)))
+              beta = fresh()
+              sFn <- Infer.unify(sAll.apply(fT), T.TFun(allArgs.map(sAll.apply), beta))
+            yield Result(sFn.compose(sAll), sFn.apply(beta))
+      yield out
     case other => Right(Result(Subst.empty, fresh()))
 
   extension (s: Subst) def applyTo(env: Env): Env =

@@ -94,6 +94,8 @@ object Normalize:
     case C.BoolLit(b)   => Element("bool", attrs = List(Attr("value", b.toString)))
     case C.Var(n)       => Element("var", name = Some(n))
     case C.Call(n, as)  => Element("call", name = Some(n), children = as.map(normExpr))
+    case C.MethodCall(recv, n, as) =>
+      Element("mcall", name = Some(n), children = normExpr(recv) :: as.map(normExpr))
     case C.Unary(op, x) => Element("call", name = Some(op), children = List(normExpr(x)))
     case C.Binary(op, l, r) => Element("call", name = Some(op), children = List(normExpr(l), normExpr(r)))
     case C.ListLit(es)  => Element("list", children = es.map(normExpr))
