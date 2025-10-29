@@ -1,0 +1,8 @@
+def g() returns: Int {
+  let s = 0
+  for (x in [4, 5]) { s = s + x }
+  return s
+}
+
+def main() returns: Int { return g() }
+

@@ -1,0 +1,7 @@
+const a = "p"
+const m = { (a + "1"): 1, ("p" + "2"): 2 }
+
+def get() returns: Int { return m["p2"] }
+
+def main() returns: Int { return get() }
+

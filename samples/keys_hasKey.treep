@@ -1,0 +1,8 @@
+const m = { "x": 10, "y": 20 }
+
+def findY() returns: Int {
+  if (hasKey(m, "y")) { return m["y"] } else { return 0 }
+}
+
+def main() returns: Int { return findY() }
+

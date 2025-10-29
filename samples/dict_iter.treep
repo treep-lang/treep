@@ -1,0 +1,10 @@
+const m = { "a": 1, "b": 2 }
+
+def sumDict() returns: Int {
+  let s = 0
+  for (p in: m) { s = s + snd(p) }
+  return s
+}
+
+def main() returns: Int { return sumDict() }
+

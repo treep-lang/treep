@@ -1,0 +1,9 @@
+def f(n: Int) returns: Int {
+  match (n) {
+    case 0 => { return 1 }
+    case _ => { return n }
+  }
+}
+
+def main() returns: Int { return f(3) }
+

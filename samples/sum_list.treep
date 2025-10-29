@@ -1,0 +1,10 @@
+const xs = [1, 2, 3]
+
+def sumList() returns: Int {
+  let s = 0
+  for (x in: xs) { s = s + x }
+  return s
+}
+
+def main() returns: Int { return sumList() }
+

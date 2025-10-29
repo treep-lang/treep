@@ -1,0 +1,6 @@
+const p = { "x": 7, "y": 8 }
+
+def h() returns: Int { return p.x }
+
+def main() returns: Int { return h() }
+
