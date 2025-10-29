@@ -114,6 +114,18 @@ object Parser:
       val name = ident(); eat(":"); Param(name, typeAnnot())
 
     private def typeAnnot(): TypeAnnot =
+      parseArrowType()
+
+    // Right-associative function type: A -> B -> C  == A -> (B -> C)
+    private def parseArrowType(): TypeAnnot =
+      var left = parseTypeAtom()
+      while at("->") do
+        next()
+        val right = parseArrowType()
+        left = TypeAnnot("->", List(left, right))
+      left
+
+    private def parseTypeAtom(): TypeAnnot =
       val base = ident()
       if at("[") then
         next()
@@ -258,6 +270,20 @@ object Parser:
       expr
 
     private def parsePrimary(): Expr = cur.kind match
+      case "(" =>
+        // lambda or grouped expr
+        // try lambda: (x: T) -> { ... }
+        val save = (i, cur)
+        next()
+        if at("IDENT") then
+          val name = cur.lexeme; next()
+          if at(":") then
+            next();
+            val tpe = typeAnnot(); eat(")"); eat("->");
+            val body = block(); return Lambda(Param(name, tpe), body)
+          else { /* not lambda */ i = save._1; }
+        // group fallback
+        val e = expr(); eat(")"); Group(e)
       case "INT" => val v = cur.lexeme.toInt; next(); IntLit(v)
       case "STRING" => val s = cur.lexeme; next(); StrLit(s)
       case "TRUE" => next(); BoolLit(true)

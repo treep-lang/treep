@@ -47,3 +47,4 @@ object CST:
   final case class ListLit(elems: List[Expr]) extends Expr
   final case class DictLit(pairs: List[(Expr, Expr)]) extends Expr
   final case class Group(expr: Expr) extends Expr
+  final case class Lambda(param: Param, body: Block) extends Expr

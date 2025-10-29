@@ -229,6 +229,10 @@ object Interpreter:
                 case Some(fn: VFunc) => callFunc(fn, recv :: args)
                 case _ => throw new RuntimeException(s"unknown method: ${name}")
     case other => VUnit
+    case "lambda" =>
+      val p = e.attrs.find(_.key=="param").get.value
+      val body = e.children.headOption.getOrElse(Element("block"))
+      VFunc(List(p), body, env)
 
   private def evalCall(env: Env, name: String, args: List[Value]): Value = name match
     // arithmetic

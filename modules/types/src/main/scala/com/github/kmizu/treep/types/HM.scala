@@ -83,6 +83,13 @@ object HM:
         // Prefer record: { key: tv | ρ }
         sRec <- Infer.unify(s1.apply(tT), T.TRecord(Map(key -> tv), Some(999999)))
       yield Result(sRec.compose(s1), sRec.apply(tv))
+    case "lambda" =>
+      val pName = e.attrs.find(_.key=="param").map(_.value).getOrElse("_")
+      val pTypeStr = e.attrs.find(_.key=="ptype").map(_.value)
+      val pType = pTypeStr.flatMap(parseTypeStr).getOrElse(fresh())
+      // body inference is deferred; return a function type with fresh return
+      val ret = fresh()
+      Right(Result(Subst.empty, T.TFun(List(pType), ret)))
     case "list"   =>
       val init: Either[TypeError, (Subst, Option[T])] = Right(Subst.empty, None)
       val res = e.children.foldLeft(init) { case (accE, ch) =>
@@ -210,3 +217,45 @@ object HM:
     Env(env.table.view.mapValues { sch =>
       sch.copy(body = s.apply(sch.body))
     }.toMap)
+
+  private def parseTypeStr(s: String): Option[T] =
+    def trim(s: String) = s.trim
+    def parseAtom(s: String): Option[T] =
+      if s.startsWith("List[") && s.endsWith("]") then parseTypeStr(s.substring(5, s.length-1)).map(T.TList(_))
+      else if s.startsWith("Dict[") && s.endsWith("]") then
+        val inner = s.substring(5, s.length-1)
+        val parts = inner.split(",").toList.map(_.trim)
+        parts match
+          case a :: b :: Nil => for ta <- parseTypeStr(a); tb <- parseTypeStr(b) yield T.TDict(ta, tb)
+          case _ => None
+      else s match
+        case "Int" => Some(T.TInt)
+        case "Bool" => Some(T.TBool)
+        case "String" => Some(T.TString)
+        case "Unit" => Some(T.TUnit)
+        case _ => None
+    // parse right-assoc arrows
+    def splitArrow(s: String): List[String] =
+      var depth = 0
+      val b = new StringBuilder
+      val parts = scala.collection.mutable.ListBuffer.empty[String]
+      var i = 0
+      while i < s.length do
+        val c = s.charAt(i)
+        if c == '[' then depth += 1
+        else if c == ']' then depth -= 1
+        if depth == 0 && i+1 < s.length && s.substring(i, i+2) == "->" then
+          parts += b.toString
+          b.clear()
+          i += 2
+        else { b.append(c); i += 1 }
+      parts += b.toString
+      parts.toList.map(_.trim)
+    val parts = splitArrow(s)
+    parts match
+      case a :: b :: Nil => for ta <- parseTypeStr(a); tb <- parseTypeStr(b) yield T.TFun(List(ta), tb)
+      case single :: Nil => parseAtom(single)
+      case a :: rest =>
+        val right = rest.mkString("->")
+        for ta <- parseTypeStr(a); tb <- parseTypeStr(right) yield T.TFun(List(ta), tb)
+      case _ => None

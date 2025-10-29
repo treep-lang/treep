@@ -103,6 +103,7 @@ object Normalize:
     case C.Index(t, k)  => Element("index", children = List(Element("target", children = List(normExpr(t))), Element("key", children = List(normExpr(k)))))
     case C.Field(t, n)  => Element("field", attrs = List(Attr("name", n)), children = List(normExpr(t)))
     case C.Group(x)     => normExpr(x)
+    case C.Lambda(p, b) => Element("lambda", attrs = List(Attr("param", p.name), Attr("ptype", renderType(p.tpe))), children = List(normBlock(b)))
 
   private def normPattern(p: C.Pattern): Element = p match
     case C.PInt(v)  => Element("pint", attrs = List(Attr("value", v.toString)))
