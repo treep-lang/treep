@@ -69,15 +69,10 @@ class InterpreterSpec extends FunSuite {
     assertEquals(valueOfInt(r2), 9)
   }
 
-  test("iterate dict values and sum") {
+  test("iterate dict via keys and sum") {
     val src =
       """
       |const m = { "a": 1, "b": 2 }
-      |def sumv() returns: Int {
-      |  let s = 0
-      |  for (v in: m) { s = s + v }
-      |  return s
-      |}
       |def sumk() returns: Int {
       |  let s = 0
       |  for (k in: keys(m)) { s = s + m[k] }
@@ -85,10 +80,23 @@ class InterpreterSpec extends FunSuite {
       |}
       |""".stripMargin
     val east = Macro.expand(Normalize.toEAST(Parser.parseProgram(src)))
-    val rv = Interpreter.evalFunction(east, "sumv")
     val rk = Interpreter.evalFunction(east, "sumk")
-    assertEquals(valueOfInt(rv), 3)
     assertEquals(valueOfInt(rk), 3)
+  }
+
+  test("iterate dict pairs and sum values via snd") {
+    val src =
+      """
+      |const m = { "a": 1, "b": 2 }
+      |def sumv() returns: Int {
+      |  let s = 0
+      |  for (p in: m) { s = s + snd(p) }
+      |  return s
+      |}
+      |""".stripMargin
+    val east = Macro.expand(Normalize.toEAST(Parser.parseProgram(src)))
+    val rv = Interpreter.evalFunction(east, "sumv")
+    assertEquals(valueOfInt(rv), 3)
   }
 
   test("match statement basic") {

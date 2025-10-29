@@ -53,20 +53,35 @@ object Checker:
           case Some(t0) => ts.tail.foreach(ti => unify(t0, ti, path :+ "list-elem")); T.TList(ts.headOption.getOrElse(T.TVar(-1)))
           case None     => T.TList(T.TVar(-1))
       case "dict"   =>
-        val vs = e.children.map(ch => typeOfExpr(ctx, ch.children.head, path :+ s"dict-${ch.attrs.find(_.key=="key").map(_.value).getOrElse("")}"))
-        vs.headOption match
-          case Some(v0) => vs.tail.foreach(vi => unify(v0, vi, path :+ "dict-val")); T.TDict(T.TString, v0)
-          case None     => T.TDict(T.TString, T.TVar(-1))
+        val ks = scala.collection.mutable.ListBuffer.empty[T]
+        val vs = scala.collection.mutable.ListBuffer.empty[T]
+        e.children.foreach { pair =>
+          val k = typeOfExpr(ctx, pair.children.head, path :+ "dict-key")
+          val v = typeOfExpr(ctx, pair.children(1), path :+ "dict-val")
+          ks += k; vs += v
+        }
+        ks.headOption.foreach(k0 => ks.tail.foreach(k => unify(k0, k, path :+ "dict-key")))
+        vs.headOption.foreach(v0 => vs.tail.foreach(v => unify(v0, v, path :+ "dict-val")))
+        T.TDict(ks.headOption.getOrElse(T.TVar(-1)), vs.headOption.getOrElse(T.TVar(-1)))
       case "index"  =>
         val t = typeOfExpr(ctx, e.children.find(_.kind=="target").flatMap(_.children.headOption).get, path :+ "index-target")
         val k = typeOfExpr(ctx, e.children.find(_.kind=="key").flatMap(_.children.headOption).get, path :+ "index-key")
         t match
-          case T.TDict(kk, vv) => unify(kk, T.TString, path :+ "index"); unify(k, T.TString, path :+ "index"); vv
-          case other => addDiag("index on non-dict/list", path); T.TVar(-1)
+          case T.TDict(kk, vv) => unify(kk, k, path :+ "index"); vv
+          case T.TList(v) => unify(k, T.TInt, path :+ "index"); v
+          case _ => addDiag("index on non-dict/list", path); T.TVar(-1)
       case "call"   =>
         val name = e.name.get
         val args = e.children.map(ch => typeOfExpr(ctx, ch, path :+ s"arg"))
         name match
+          case "fst" =>
+            val a = T.TVar(-101); val b = T.TVar(-102)
+            unify(args.head, T.TTuple2(a, b), path)
+            a
+          case "snd" =>
+            val a = T.TVar(-103); val b = T.TVar(-104)
+            unify(args.head, T.TTuple2(a, b), path)
+            b
           case "+" | "-" | "*" | "/" | "%" => args.foreach(unify(_, T.TInt, path)); T.TInt
           case ">" | ">=" | "<" | "<=" => args.foreach(unify(_, T.TInt, path)); T.TBool
           case "==" | "!=" =>

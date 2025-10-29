@@ -44,7 +44,7 @@ class ParserSpec extends FunSuite {
     val C.ConstDecl(_, _, dictInit, _) = prog.tops(1)
     val C.DictLit(ps) = dictInit
     assertEquals(ps.length, 2)
-    assert(ps.exists(_._1 == "a"))
+    assert(ps.exists { case (k, _) => k.isInstanceOf[C.StrLit] && k.asInstanceOf[C.StrLit].value == "a" })
   }
 
   test("if/else and for-in in block") {

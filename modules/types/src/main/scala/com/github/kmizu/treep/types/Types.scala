@@ -77,6 +77,11 @@ object Infer:
         s1 <- unify(ka, kb)
         s2 <- unify(s1.apply(va), s1.apply(vb))
       yield s2.compose(s1)
+    case (Type.TTuple2(a1, b1), Type.TTuple2(a2, b2)) =>
+      for
+        s1 <- unify(a1, a2)
+        s2 <- unify(s1.apply(b1), s1.apply(b2))
+      yield s2.compose(s1)
     case (Type.TFun(as1, r1), Type.TFun(as2, r2)) if as1.length == as2.length =>
       val init: Either[TypeError, Subst] = Right(Subst.empty)
       val argsUnify = as1.zip(as2).foldLeft(init) { case (accE, (x, y)) =>

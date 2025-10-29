@@ -97,7 +97,7 @@ object Normalize:
     case C.Unary(op, x) => Element("call", name = Some(op), children = List(normExpr(x)))
     case C.Binary(op, l, r) => Element("call", name = Some(op), children = List(normExpr(l), normExpr(r)))
     case C.ListLit(es)  => Element("list", children = es.map(normExpr))
-    case C.DictLit(ps)  => Element("dict", children = ps.map { case (k, v) => Element("pair", attrs = List(Attr("key", k)), children = List(normExpr(v))) })
+    case C.DictLit(ps)  => Element("dict", children = ps.map { case (k, v) => Element("pair", children = List(normExpr(k), normExpr(v))) })
     case C.Index(t, k)  => Element("index", children = List(Element("target", children = List(normExpr(t))), Element("key", children = List(normExpr(k)))))
     case C.Field(t, n)  => Element("field", attrs = List(Attr("name", n)), children = List(normExpr(t)))
     case C.Group(x)     => normExpr(x)

@@ -11,10 +11,11 @@ object Interpreter:
   final case class VBool(v: Boolean) extends Value
   final case class VString(v: String) extends Value
   final case class VList(vs: List[Value]) extends Value
-  final case class VDict(m: Map[String, Value]) extends Value
+  final case class VDict(m: Map[Value, Value]) extends Value
   final case class VIter(private val data: List[Value], private var ix: Int) extends Value:
     def hasNext: Boolean = ix < data.length
     def next(): Value = { val r = data(ix); ix += 1; r }
+  final case class VTuple2(a: Value, b: Value) extends Value
   final case class VFunc(params: List[String], body: Element, env: Env) extends Value
 
   final case class Env(scopes: List[mutable.Map[String, Value]]):
@@ -143,9 +144,9 @@ object Interpreter:
     case "var"    => env.get(e.name.get).getOrElse(throw new RuntimeException(s"unbound: ${e.name.get}"))
     case "list"   => VList(e.children.map(ch => evalExpr(env, ch)))
     case "dict"   =>
-      val pairs = e.children.map { p =>
-        val k = p.attrs.find(_.key == "key").get.value
-        val v = evalExpr(env, p.children.head)
+      val pairs: Map[Value, Value] = e.children.map { p =>
+        val k = evalExpr(env, p.children.head)
+        val v = evalExpr(env, p.children(1))
         k -> v
       }.toMap
       VDict(pairs)
@@ -153,7 +154,7 @@ object Interpreter:
       val t = e.children.find(_.kind == "target").flatMap(_.children.headOption).get
       val k = e.children.find(_.kind == "key").flatMap(_.children.headOption).get
       (evalExpr(env, t), evalExpr(env, k)) match
-        case (VDict(m), VString(s)) => m.getOrElse(s, VUnit)
+        case (VDict(m), key) => m.getOrElse(key, VUnit)
         case (VList(xs), VInt(i)) => xs.lift(i).getOrElse(VUnit)
         case other => throw new RuntimeException(s"index not supported: ${other}")
     case "field" =>
@@ -199,7 +200,7 @@ object Interpreter:
     // iterators
     case "iter" => args match
       case List(VList(xs)) => VIter(xs, 0)
-      case List(VDict(m)) => VIter(m.values.toList, 0)
+      case List(VDict(m)) => VIter(m.toList.map { case (k, v) => VTuple2(k, v) }, 0)
       case other => throw new RuntimeException(s"iter expects list/dict, got ${other}")
     case "hasNext" => args match
       case List(it: VIter) => VBool(it.hasNext)
@@ -212,10 +213,16 @@ object Interpreter:
       case List(VList(xs), v) => VList(xs :+ v)
       case other => throw new RuntimeException(s"push expects (List, any), got ${other}")
     case "keys" => args match
-      case List(VDict(m)) => VList(m.keys.toList.sorted.map(VString.apply))
+      case List(VDict(m)) => VList(m.keys.toList)
       case _ => throw new RuntimeException("keys expects Dict")
     case "hasKey" => args match
-      case List(VDict(m), VString(k)) => VBool(m.contains(k))
+      case List(VDict(m), k) => VBool(m.contains(k))
+    case "fst" => args match
+      case List(VTuple2(a, _)) => a
+      case _ => throw new RuntimeException("fst expects a tuple2")
+    case "snd" => args match
+      case List(VTuple2(_, b)) => b
+      case _ => throw new RuntimeException("snd expects a tuple2")
       case _ => VBool(false)
     // user-defined functions
     case other =>

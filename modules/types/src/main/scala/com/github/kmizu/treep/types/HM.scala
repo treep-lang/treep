@@ -27,12 +27,16 @@ object HM:
       "!="-> Scheme(Set(2), T.TFun(List(T.TVar(2), T.TVar(2)), T.TBool)),
       // Collections
       "push" -> Scheme(Set(3), T.TFun(List(T.TList(T.TVar(3)), T.TVar(3)), T.TList(T.TVar(3)))),
-      "keys" -> Scheme(Set(4), T.TFun(List(T.TDict(T.TString, T.TVar(4))), T.TList(T.TString))),
-      "hasKey" -> scheme(T.TFun(List(T.TDict(T.TString, T.TString), T.TString), T.TBool)),
-      // Iterators for lists
-      "iter" -> Scheme(Set(5), T.TFun(List(T.TList(T.TVar(5))), T.TIter(T.TVar(5)))),
-      "hasNext" -> Scheme(Set(6), T.TFun(List(T.TIter(T.TVar(6))), T.TBool)),
-      "next" -> Scheme(Set(7), T.TFun(List(T.TIter(T.TVar(7))), T.TVar(7)))
+      // dict helpers, fully polymorphic in key/value
+      "keys" -> Scheme(Set(10,11), T.TFun(List(T.TDict(T.TVar(10), T.TVar(11))), T.TList(T.TVar(10)))),
+      "hasKey" -> Scheme(Set(12,13), T.TFun(List(T.TDict(T.TVar(12), T.TVar(13)), T.TVar(12)), T.TBool)),
+      // Iterators for lists and dicts
+      "iter" -> Scheme(Set(14,15,16), T.TFun(List(T.TVar(14)), T.TVar(15))), // specialized in call branch
+      "hasNext" -> Scheme(Set(17), T.TFun(List(T.TIter(T.TVar(17))), T.TBool)),
+      "next" -> Scheme(Set(18), T.TFun(List(T.TIter(T.TVar(18))), T.TVar(18))),
+      // tuple accessors
+      "fst" -> Scheme(Set(19,20), T.TFun(List(T.TTuple2(T.TVar(19), T.TVar(20))), T.TVar(19))),
+      "snd" -> Scheme(Set(21,22), T.TFun(List(T.TTuple2(T.TVar(21), T.TVar(22))), T.TVar(22)))
     )
     Env(ops)
 
@@ -42,18 +46,20 @@ object HM:
     case "string" => Right(Result(Subst.empty, T.TString))
     case "var"    => env.lookup(e.name.get).map(inst).toRight(TypeError.Mismatch(T.TVar(-1), T.TVar(-2))).map(t => Result(Subst.empty, t))
     case "dict"   =>
-      // unify all values, String keys
-      val init: Either[TypeError, (Subst, Option[T])] = Right(Subst.empty, None)
+      // unify keys and values across pairs
+      val init: Either[TypeError, (Subst, Option[T], Option[T])] = Right(Subst.empty, None, None)
       val res = e.children.foldLeft(init) { case (accE, pair) =>
-        val vexpr = pair.children.head
+        val kexpr = pair.children.head
+        val vexpr = pair.children(1)
         for
-          (sAcc, tOpt) <- accE
-          Result(sV, tV) <- inferExpr(sAcc.applyTo(env), vexpr)
-        yield tOpt match
-          case None => (sV, Some(tV))
-          case Some(t0) => Infer.unify(sV.apply(t0), sV.apply(tV)).map(u => (u.compose(sV), Some(u.apply(t0)))).toOption.get
+          (sAcc, kOpt, vOpt) <- accE
+          Result(sK, tK) <- inferExpr(sAcc.applyTo(env), kexpr)
+          Result(sV, tV) <- inferExpr(sK.applyTo(env), vexpr)
+          sK2 <- kOpt.map(kk => Infer.unify(sV.apply(kk), sV.apply(tK))).getOrElse(Right(sV))
+          sV2 <- vOpt.map(vv => Infer.unify(sK2.apply(vv), sK2.apply(tV))).getOrElse(Right(sK2))
+        yield (sV2, Some(sV2.apply(tK)), Some(sV2.apply(tV)))
       }
-      res.map { case (s, tvOpt) => Result(s, T.TDict(T.TString, tvOpt.getOrElse(fresh()))) }
+      res.map { case (s, kOpt, vOpt) => Result(s, T.TDict(kOpt.getOrElse(fresh()), vOpt.getOrElse(fresh()))) }
     case "index"  =>
       val tE = e.children.find(_.kind=="target").flatMap(_.children.headOption).get
       val kE = e.children.find(_.kind=="key").flatMap(_.children.headOption).get
@@ -100,12 +106,12 @@ object HM:
       }
       name match
         case "iter" =>
-          // specialize: either List[a] -> Iter[a] or Dict[String,b] -> Iter[b]
+        // specialize: either List[a] -> Iter[a] or Dict[k,b] -> Iter[(k,b)]
           for
             (sArgs, tArgs) <- res
             tv = fresh()
             choice = Infer.unify(tArgs.headOption.getOrElse(fresh()), T.TList(tv)).map(s => (s, tv)).orElse {
-              val v = fresh(); Infer.unify(tArgs.headOption.getOrElse(fresh()), T.TDict(T.TString, v)).map(s => (s, v))
+              val k = fresh(); val v = fresh(); Infer.unify(tArgs.headOption.getOrElse(fresh()), T.TDict(k, v)).map(s => (s, T.TTuple2(k, v)))
             }
             (sC, elem) <- choice
           yield Result(sC.compose(sArgs), T.TIter(elem))
@@ -120,6 +126,5 @@ object HM:
 
   extension (s: Subst) def applyTo(env: Env): Env =
     Env(env.table.view.mapValues { sch =>
-      val t = inst(sch)
-      Scheme(Set.empty, s.apply(t))
+      sch.copy(body = s.apply(sch.body))
     }.toMap)

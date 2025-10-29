@@ -37,4 +37,14 @@ class HMSpec extends FunSuite {
     val r2 = HM.inferExpr(env, dictIdx)
     assert(r2.isRight)
   }
+
+  test("iter over dict returns iterator of pairs") {
+    val env = HM.builtinEnv
+    val dict = Element("dict", children = List(Element("pair", attrs = List(Attr("key","a")), children = List(Element("int", attrs = List(Attr("value","1")))))))
+    val expr = Element("call", name = Some("iter"), children = List(dict))
+    val r = HM.inferExpr(env, expr)
+    assert(r.isRight)
+    val ty = r.toOption.get.ty
+    assert(ty.isInstanceOf[Type.TIter])
+  }
 }

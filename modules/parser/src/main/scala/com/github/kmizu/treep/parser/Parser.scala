@@ -269,7 +269,7 @@ object Parser:
         ListLit(elems.toList)
       case "{" =>
         next()
-        val pairs = scala.collection.mutable.ListBuffer.empty[(String, Expr)]
+        val pairs = scala.collection.mutable.ListBuffer.empty[(Expr, Expr)]
         if !at("}") then
           pairs += dictPair()
           while at(",") do { next(); pairs += dictPair() }
@@ -278,14 +278,11 @@ object Parser:
       case "(" => next(); val e = expr(); eat(")"); Group(e)
       case k => error(s"unexpected primary: ${k}")
 
-    private def dictPair(): (String, Expr) =
-      // MVP: key as string literal or bare ident treated as string key
-      val key =
-        if at("STRING") then { val s = cur.lexeme; next(); s }
-        else { val s = ident(); s }
+    private def dictPair(): (Expr, Expr) =
+      val keyExpr = expr()
       eat(":")
       val v = expr()
-      (key, v)
+      (keyExpr, v)
 
     private def ident(): String =
       if at("IDENT") then { val s = cur.lexeme; next(); s }
