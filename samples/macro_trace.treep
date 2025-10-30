@@ -1,0 +1,26 @@
+// trace macro: tracing with prefix
+// Usage: trace(value)
+
+macro trace {
+  pattern: trace($value)
+  expand: {
+    println(value)
+  }
+}
+
+def test() returns: Unit {
+  trace("Function started")
+
+  let x = 1
+  trace(x)
+
+  x = x + 1
+  trace(x)
+
+  trace("Function ended")
+}
+
+def main() returns: Unit {
+  println("=== trace macro demo ===")
+  test()
+}

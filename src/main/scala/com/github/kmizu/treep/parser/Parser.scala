@@ -142,11 +142,23 @@ object Parser:
       eat(":")
       val patternStart = i
       var patternText = ""
-      // Collect tokens until we see "expand" or "}"
-      while !at("EXPAND") && !at("}") && !at("EOF") do
-        patternText += cur.lexeme
-        if !at("EXPAND") && !at("}") then patternText += " "
-        next()
+      var braceDepth = 0
+      var patternDone = false
+      // Collect tokens until we see "expand" at depth 0
+      while !patternDone && !at("EOF") do
+        if at("{") then braceDepth += 1
+        else if at("}") then
+          if braceDepth > 0 then
+            braceDepth -= 1
+          else
+            // This is the closing } of the macro definition
+            patternDone = true
+
+        if !patternDone && !at("EXPAND") then
+          patternText += cur.lexeme + " "
+          next()
+        else if at("EXPAND") && braceDepth == 0 then
+          patternDone = true
       patternText = patternText.trim
 
       // Parse expand: <block>

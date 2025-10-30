@@ -1,0 +1,33 @@
+// ifZero macro: check if value is zero
+// Usage: ifZero(value) { body }
+
+macro ifZero {
+  pattern: ifZero($value) { $body }
+  expand: {
+    if (value == 0) {
+      body
+    }
+  }
+}
+
+def test() returns: Unit {
+  let x = 0
+  let y = 5
+
+  ifZero(x) {
+    println("x is zero")
+  }
+
+  ifZero(y) {
+    println("y is zero")
+  }
+
+  ifZero(0) {
+    println("literal zero")
+  }
+}
+
+def main() returns: Unit {
+  println("=== ifZero macro demo ===")
+  test()
+}

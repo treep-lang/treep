@@ -110,7 +110,12 @@ object MacroPattern:
   def expandMacro(pattern: ParsedPattern, expansion: Element, callSite: Element): Element =
     matchPattern(pattern, callSite) match
       case Some(bindings) =>
-        substitute(expansion, bindings)
+        val substituted = substitute(expansion, bindings)
+        // If expansion is a block with single child, unwrap it
+        if substituted.kind == "block" && substituted.children.size == 1 then
+          substituted.children.head
+        else
+          substituted
       case None =>
         // Pattern didn't match, return original
         callSite

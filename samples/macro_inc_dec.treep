@@ -1,0 +1,36 @@
+// inc/dec macros: increment and decrement
+// Usage: inc(x) expands to x = x + 1
+//        dec(x) expands to x = x - 1
+
+macro inc {
+  pattern: inc($var)
+  expand: {
+    var = var + 1
+  }
+}
+
+macro dec {
+  pattern: dec($var)
+  expand: {
+    var = var - 1
+  }
+}
+
+def test() returns: Unit {
+  let x = 0
+  println(x)
+
+  inc(x)
+  println(x)
+
+  inc(x)
+  println(x)
+
+  dec(x)
+  println(x)
+}
+
+def main() returns: Unit {
+  println("=== inc/dec macro demo ===")
+  test()
+}

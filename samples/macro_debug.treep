@@ -1,0 +1,23 @@
+// debug macro: debug print with prefix
+// Usage: debug(value) expands to println(value)
+
+macro debug {
+  pattern: debug($value)
+  expand: {
+    println(value)
+  }
+}
+
+def test() returns: Unit {
+  let x = 42
+  let y = "hello"
+
+  debug(x)
+  debug(y)
+  debug(x + 10)
+}
+
+def main() returns: Unit {
+  println("=== debug macro demo ===")
+  test()
+}

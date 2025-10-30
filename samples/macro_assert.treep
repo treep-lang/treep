@@ -1,0 +1,29 @@
+// assert macro: simple assertion
+// Usage: assert(condition) expands to if (!condition) { println("Assertion failed!") }
+
+macro assert {
+  pattern: assert($cond)
+  expand: {
+    if (!cond) {
+      println("Assertion failed!")
+    }
+  }
+}
+
+def test() returns: Unit {
+  let x = 5
+
+  assert(x > 0)
+  println("First assertion passed")
+
+  assert(x < 10)
+  println("Second assertion passed")
+
+  assert(x == 5)
+  println("Third assertion passed")
+}
+
+def main() returns: Unit {
+  println("=== assert macro demo ===")
+  test()
+}

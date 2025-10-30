@@ -1,0 +1,32 @@
+// whileTrue macro: infinite loop (with break via return)
+// Usage: whileTrue { body }
+
+macro whileTrue {
+  pattern: whileTrue { $body }
+  expand: {
+    while (true) {
+      body
+    }
+  }
+}
+
+def test() returns: Int {
+  let x = 0
+
+  whileTrue {
+    println(x)
+    x = x + 1
+    if (x >= 3) {
+      return x
+    }
+  }
+
+  return 0
+}
+
+def main() returns: Unit {
+  println("=== whileTrue macro demo ===")
+  let result = test()
+  println("Result:")
+  println(result)
+}

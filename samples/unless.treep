@@ -7,8 +7,8 @@
 macro unless {
   pattern: unless($cond) { $body }
   expand: {
-    if (!$cond) {
-      $body
+    if (!cond) {
+      body
     }
   }
 }

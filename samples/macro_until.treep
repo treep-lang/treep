@@ -1,0 +1,27 @@
+// until macro: negated while loop
+// Usage: until(condition) { body }
+
+macro until {
+  pattern: until($cond) { $body }
+  expand: {
+    while (!cond) {
+      body
+    }
+  }
+}
+
+def test() returns: Unit {
+  let x = 0
+
+  until(x >= 5) {
+    println(x)
+    x = x + 1
+  }
+
+  println("Done!")
+}
+
+def main() returns: Unit {
+  println("=== until macro demo ===")
+  test()
+}

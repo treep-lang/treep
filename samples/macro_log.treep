@@ -1,0 +1,23 @@
+// log macro: logging alias for println
+// Usage: log(message)
+
+macro log {
+  pattern: log($message)
+  expand: {
+    println(message)
+  }
+}
+
+def test() returns: Unit {
+  log("Starting test...")
+
+  let x = 42
+  log(x)
+
+  log("Test completed")
+}
+
+def main() returns: Unit {
+  println("=== log macro demo ===")
+  test()
+}
