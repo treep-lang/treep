@@ -4,9 +4,9 @@ treep は、表層構文 → EAST 正規化 → マクロ展開 → HM 型推論
 
 ## クイックスタート
 - 依存取得/ビルド: `sbt compile`
-- サンプル生成: `sbt 'cli/run new'`（`samples/hello.treep`）
-- 解析/型チェック（生成物なし）: `sbt 'cli/run build'`
-- 実行（インタプリタ）: `sbt 'cli/run run'`
+- サンプル生成: `sbt "run new"`（`samples/hello.treep`）
+- 解析/型チェック（生成物なし）: `sbt "run build"`
+- 実行（インタプリタ）: `sbt "run run"`
 - テスト: `sbt test`
 
 ## 言語の骨子
@@ -68,13 +68,14 @@ def use() returns: Int { return apply1(incF, 41) }
   - Dict はキーが一般式（Expr）で記述可（`{ 1: "a", true: 2 }` など）。`p.x` は文字列キーの糖衣にも対応
 
 ## ディレクトリ構成（抜粋）
-- `modules/lexer` … トークナイザ
-- `modules/parser` … CST + Pratt/LL パーサ（関数型/ラムダ対応）
-- `modules/east` … EAST 定義 + 正規化（mcall/lambda/SourceSpan）+ マクロ
-- `modules/types` … Type/Scheme/Subst/Unify/HM/Checker（Row/メソッド解決）
-- `modules/interpreter` … インタプリタ（List/Dict/Iter/Record メソッド + ラムダ）
-- `modules/cli` … `treep new|build|run|fmt|test`
-- `modules/tests` … MUnit テスト
+- `src/main/scala/com/github/kmizu/treep/lexer` … トークナイザ
+- `src/main/scala/com/github/kmizu/treep/parser` … CST + Pratt/LL パーサ（関数型/ラムダ対応）
+- `src/main/scala/com/github/kmizu/treep/east` … EAST 定義 + 正規化（mcall/lambda/SourceSpan）
+- `src/main/scala/com/github/kmizu/treep/macro` … EAST マクロ展開（for/in → while）
+- `src/main/scala/com/github/kmizu/treep/types` … Type/Scheme/Subst/Unify/HM/Checker（Row/メソッド解決）
+- `src/main/scala/com/github/kmizu/treep/interpreter` … インタプリタ（List/Dict/Iter/Record メソッド + ラムダ）
+- `src/main/scala/com/github/kmizu/treep/cli` … `treep new|build|run|fmt|test`
+- `src/test/scala/com/github/kmizu/treep` … MUnit テスト
 
 ## 設計ノート
 - 位置情報（file:line:col）は EAST `SourceSpan` に保持し、診断に活用（順次整備）
