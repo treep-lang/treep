@@ -1,0 +1,29 @@
+// Test argument type inference without type annotations
+
+// Test 1: Simple arithmetic function without type annotations
+def add(x, y) {
+  return x + y
+}
+
+// Test 2: Function with one annotated and one inferred argument
+def multiply(x: Int, y) {
+  return x * y
+}
+
+// Test 3: Fully annotated function for comparison
+def subtract(x: Int, y: Int) returns: Int {
+  return x - y
+}
+
+def main() returns: Int {
+  let result1 = add(10, 20)
+  println(result1)
+
+  let result2 = multiply(5, 6)
+  println(result2)
+
+  let result3 = subtract(100, 50)
+  println(result3)
+
+  return 0
+}

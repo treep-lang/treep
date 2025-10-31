@@ -16,7 +16,13 @@ object Normalize:
       Element(
         kind = "def",
         name = Some(name),
-        attrs = (if params.nonEmpty then List(Attr("params", params.map(pp => s"${pp.name}:${renderType(pp.tpe)}").mkString(","))) else Nil) ++
+        attrs = (if params.nonEmpty then
+                  List(Attr("params", params.map(pp =>
+                    pp.tpe match
+                      case Some(t) => s"${pp.name}:${renderType(t)}"
+                      case None => pp.name  // No type annotation
+                  ).mkString(",")))
+                else Nil) ++
                 ret.toList.map(r => Attr("returns", renderType(r))),
         children = List(normBlock(body)),
         span = sp.map(s => SourceSpan(s.file, s.line, s.col))
@@ -129,7 +135,11 @@ object Normalize:
     case C.Field(t, n)  => Element("field", attrs = List(Attr("name", n)), children = List(normExpr(t)))
     case C.Group(x)     => normExpr(x)
     case C.Lambda(ps, b) =>
-      val paramsStr = ps.map(pp => s"${pp.name}:${renderType(pp.tpe)}").mkString(",")
+      val paramsStr = ps.map(pp =>
+        pp.tpe match
+          case Some(t) => s"${pp.name}:${renderType(t)}"
+          case None => pp.name  // No type annotation
+      ).mkString(",")
       Element("lambda", attrs = List(Attr("params", paramsStr)), children = List(normBlock(b)))
 
   private def normPattern(p: C.Pattern): Element = p match

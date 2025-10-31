@@ -15,6 +15,7 @@ object Checker:
 
   def check(prog: Element): List[Diag] =
     val diags = scala.collection.mutable.ListBuffer.empty[Diag]
+    var tvCounter = -1000  // Type variable counter for argument type inference
 
     def parseType(s: String): Option[T] =
       s.trim match
@@ -232,15 +233,22 @@ object Checker:
     val funSigs: Map[String, (List[T], T)] = prog.children.collect {
       case d if d.kind == "def" =>
         val name = d.name.getOrElse("?")
+        // Parse parameters with optional type annotations
         val params: List[T] =
           d.getAttr("params").filter(_.nonEmpty)
-            .map(pStr => ParamParser.parseParamTypes(pStr).flatMap(parseType)).getOrElse(Nil)
+            .map { pStr =>
+              ParamParser.parseParamsWithOptionalTypes(pStr).map { case (paramName, optType) =>
+                optType.flatMap(parseType).getOrElse {
+                  // Allocate a fresh type variable for unannotated parameters
+                  tvCounter -= 1
+                  T.TVar(tvCounter)
+                }
+              }
+            }.getOrElse(Nil)
         val ret: T = d.getAttr("returns").flatMap(parseType).getOrElse {
-          // Try to infer return type from function body
-          val body = d.children.find(_.kind == "block").getOrElse(Element("block"))
-          val paramNames = d.getAttr("params").filter(_.nonEmpty)
-            .map(pStr => ParamParser.parseParamNames(pStr)).getOrElse(Nil)
-          inferReturnTypeFromBody(body, params, paramNames).getOrElse(T.TUnit)
+          // Allocate a fresh type variable for unannotated return type
+          tvCounter -= 1
+          T.TVar(tvCounter)
         }
         name -> (params -> ret)
     }.toMap
@@ -258,14 +266,16 @@ object Checker:
       case "dict" => e.children.forall(p => p.children.headOption.forall(isNonExp))
       case _ => false
 
-    def walkBlockHM(env0: Env, blk: Element, retT: T, fnName: String): Env =
+    def walkBlockHM(env0: Env, blk: Element, retT: T, fnName: String): (Env, Subst) =
       var env = env0
+      var subst = Subst.empty
       blk.children.foreach { st =>
         st.kind match
           case "let" =>
             val initE = st.getChild("init").getOrElse(Element("unit"))
             HM.inferExpr(env, initE) match
               case Right(HM.Result(s, t)) =>
+                subst = s.compose(subst)
                 env = s.applyTo(env)
                 val sch = if isNonExp(initE) then Infer.generalize(env, t) else Scheme(Set.empty, t)
                 env = env.extend(st.name.getOrElse("?"), sch)
@@ -274,13 +284,16 @@ object Checker:
             val rhs = st.children.headOption.getOrElse(Element("unit"))
             HM.inferExpr(env, rhs) match
               case Right(HM.Result(s, t)) =>
+                subst = s.compose(subst)
                 env = s.applyTo(env)
                 st.name.foreach { varName =>
                   env.lookup(varName).foreach { sch =>
                     val tv = HM.inferExpr(env, Element("var", name = Some(varName))).toOption.get.ty
                     Infer.unify(t, tv) match
                       case Left(_) => addDiag("assignment type mismatch", List(s"def ${fnName}", "assign"))
-                      case Right(us) => env = us.applyTo(env)
+                      case Right(us) =>
+                        subst = us.compose(subst)
+                        env = us.applyTo(env)
                   }
                 }
               case Left(err) => addDiag(s"type inference failed in assign: ${err}", List(s"def ${fnName}", "assign"))
@@ -289,46 +302,66 @@ object Checker:
             st.children.headOption match
               case None => Infer.unify(retT, T.TUnit) match
                 case Left(_) => addDiag("return type mismatch", List(s"def ${fnName}", "return"))
-                case Right(_) => ()
+                case Right(us) =>
+                  subst = us.compose(subst)
               case Some(ex) =>
                 HM.inferExpr(env, ex) match
                   case Right(HM.Result(s, t)) =>
+                    subst = s.compose(subst)
                     env = s.applyTo(env)
                     Infer.unify(s.apply(retT), s.apply(t)) match
                       case Left(_) => addDiag("return type mismatch", List(s"def ${fnName}", "return"))
-                      case Right(us) => env = us.applyTo(env)
+                      case Right(us) =>
+                        subst = us.compose(subst)
+                        env = us.applyTo(env)
                   case Left(err) => addDiag(s"return type inference failed: ${err}", List(s"def ${fnName}", "return"))
           case "if" =>
             val cond = st.getChild("cond").getOrElse(Element("bool", attrs = List(Attr("value", "true"))))
             HM.inferExpr(env, cond).foreach { case HM.Result(s, t) =>
+              subst = s.compose(subst)
               env = s.applyTo(env); Infer.unify(t, T.TBool)
             }
-            st.children.filter(_.kind=="block").foreach(b => env = walkBlockHM(env, b, retT, fnName))
+            st.children.filter(_.kind=="block").foreach { b =>
+              val (newEnv, newSubst) = walkBlockHM(env, b, retT, fnName)
+              env = newEnv
+              subst = newSubst.compose(subst)
+            }
           case "while" =>
             val cond = st.getChild("cond").getOrElse(Element("bool", attrs = List(Attr("value", "true"))))
-            HM.inferExpr(env, cond).foreach { case HM.Result(s, t) => env = s.applyTo(env); Infer.unify(t, T.TBool) }
+            HM.inferExpr(env, cond).foreach { case HM.Result(s, t) =>
+              subst = s.compose(subst)
+              env = s.applyTo(env); Infer.unify(t, T.TBool)
+            }
             val body = st.children.find(_.kind=="block").getOrElse(Element("block"))
-            env = walkBlockHM(env, body, retT, fnName)
+            val (newEnv, newSubst) = walkBlockHM(env, body, retT, fnName)
+            env = newEnv
+            subst = newSubst.compose(subst)
           case _ => ()
       }
-      env
+      (env, subst)
 
-    // Check defs
+    // Check defs and collect substitutions
+    val inferredFunSigs = scala.collection.mutable.Map[String, (List[T], T)]()
     prog.children.foreach { ch =>
       ch.kind match
         case "def" =>
           val name = ch.name.getOrElse("?")
           // Use the inferred return type from funSigs
-          val retT: T = funSigs.get(name).map(_._2).getOrElse(T.TUnit)
-          val params: List[(String,T)] =
+          val (paramTypes, retT) = funSigs.getOrElse(name, (Nil, T.TUnit))
+          val paramNamesAndTypes: List[(String,T)] =
             ch.getAttr("params").filter(_.nonEmpty)
-              .map(pStr => ParamParser.parseParams(pStr).flatMap { case (n, tStr) =>
-                parseType(tStr).map(t => n -> t)
-              }).getOrElse(Nil)
+              .map { pStr =>
+                val names = ParamParser.parseParamNames(pStr)
+                names.zip(paramTypes)
+              }.getOrElse(Nil)
           var env = hmEnv
-          params.foreach { case (n,t) => env = env.extend(n, Scheme(Set.empty, t)) }
+          paramNamesAndTypes.foreach { case (n,t) => env = env.extend(n, Scheme(Set.empty, t)) }
           val body = ch.children.headOption.getOrElse(Element("block"))
-          walkBlockHM(env, body, retT, name)
+          val (_, subst) = walkBlockHM(env, body, retT, name)
+          // Apply substitution to parameter and return types
+          val concreteParamTypes = paramTypes.map(subst.apply)
+          val concreteRetT = subst.apply(retT)
+          inferredFunSigs(name) = (concreteParamTypes, concreteRetT)
         case "const" =>
           val cname = ch.name.getOrElse("")
           val init = ch.getChild("init")
@@ -374,11 +407,16 @@ object Checker:
                   var methodEnv = hmEnv.extend(receiverParam, Scheme(Set.empty, receiverType))
                   params.foreach { case (n,t) => methodEnv = methodEnv.extend(n, Scheme(Set.empty, t)) }
                   val body = methodDef.children.headOption.getOrElse(Element("block"))
-                  walkBlockHM(methodEnv, body, retT, methodName)
+                  val (_, _) = walkBlockHM(methodEnv, body, retT, methodName)
               }
             case None =>
               addDiag(s"invalid receiver type: ${receiverTypeStr}", List("extension"))
         case _ => ()
+    }
+
+    // Update hmEnv with inferred function signatures
+    inferredFunSigs.foreach { case (name, (paramTypes, retType)) =>
+      hmEnv = hmEnv.extend(name, Scheme(Set.empty, T.TFun(paramTypes, retType)))
     }
 
     diags.toList

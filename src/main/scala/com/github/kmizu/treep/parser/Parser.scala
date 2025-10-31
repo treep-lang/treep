@@ -175,7 +175,9 @@ object Parser:
       val n = ident(); eat(":"); (n, typeAnnot())
 
     private def param(): Param =
-      val name = ident(); eat(":"); Param(name, typeAnnot())
+      val name = ident()
+      val tpe = if at(":") then { next(); Some(typeAnnot()) } else None
+      Param(name, tpe)
 
     private def typeAnnot(): TypeAnnot =
       parseArrowType()
@@ -358,8 +360,8 @@ object Parser:
           if at(":") then
             next();
             val tpe = typeAnnot()
-            paramsBuf += Param(name, tpe)
-            while at(",") do { next(); val n2 = ident(); eat(":"); paramsBuf += Param(n2, typeAnnot()) }
+            paramsBuf += Param(name, Some(tpe))
+            while at(",") do { next(); val n2 = ident(); eat(":"); paramsBuf += Param(n2, Some(typeAnnot())) }
             if at(")") then
               next()
               if at("->") then

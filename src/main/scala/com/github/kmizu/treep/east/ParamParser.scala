@@ -2,8 +2,23 @@ package com.github.kmizu.treep.east
 
 object ParamParser:
   /**
+   * Parse parameter list string like "x: Int, y: String" or "x, y" into list of (name, Option[type]) pairs
+   * Supports parameters with and without type annotations
+   */
+  def parseParamsWithOptionalTypes(paramsStr: String): List[(String, Option[String])] =
+    if paramsStr.trim.isEmpty then Nil
+    else
+      paramsStr.split(",").toList.map { param =>
+        val colonIdx = param.indexOf(":")
+        if colonIdx > 0 && colonIdx + 1 < param.length then
+          (param.substring(0, colonIdx).trim, Some(param.substring(colonIdx + 1).trim))
+        else
+          (param.trim, None)
+      }.filter(_._1.nonEmpty)
+
+  /**
    * Parse parameter list string like "x: Int, y: String" into list of (name, type) pairs
-   * Returns None if parsing fails for a parameter
+   * Returns None if parsing fails for a parameter (excludes parameters without type annotations)
    */
   def parseParams(paramsStr: String): List[(String, String)] =
     if paramsStr.trim.isEmpty then Nil
