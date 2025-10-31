@@ -16,7 +16,9 @@ object MacroExpander:
     // First, extract and register user-defined macros
     val programWithoutMacros = MacroRegistry.extractAndRegister(tree)
     // Then expand all macros (built-in and user-defined)
-    expandAll(programWithoutMacros)
+    val expanded = expandAll(programWithoutMacros)
+    // Post-process: unwrap expr(assign(...)) -> assign(...)
+    unwrapExprAssign(expanded)
 
   /** Recursively expand all macros in the tree */
   private def expandAll(el: Element): Element =
@@ -78,3 +80,17 @@ object MacroExpander:
 
     // Recursively expand the result in case it contains more macros
     expandAll(expanded)
+
+  /**
+   * Post-process to unwrap expr(assign(...)) -> assign(...)
+   * This is needed because macros can expand to assign statements,
+   * but they are called in expr contexts
+   */
+  private def unwrapExprAssign(el: Element): Element =
+    el.kind match
+      case "expr" if el.children.size == 1 && el.children.head.kind == "assign" =>
+        // Unwrap: expr(assign(...)) -> assign(...)
+        el.children.head.copy(children = el.children.head.children.map(unwrapExprAssign))
+      case _ =>
+        // Recursively process children
+        el.copy(children = el.children.map(unwrapExprAssign))

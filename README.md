@@ -178,6 +178,31 @@ x is not zero
 - **衛生的展開**: マクロ展開時に gensym を使用し、変数捕捉を回避。
 - **型安全**: EAST 形式で展開されるため、型検査器が最終的な型の整合性を検証。
 
+### 動作確認済みマクロ ✅
+
+以下のマクロは完全に動作確認済みです:
+
+| マクロ | 用途 | サンプルファイル |
+|--------|------|------------------|
+| **assert** | アサーション | `samples/macro_assert.treep` |
+| **debug** | デバッグ出力 | `samples/macro_debug.treep` |
+| **log** | ロギング | `samples/macro_log.treep` |
+| **trace** | トレーシング | `samples/macro_trace.treep` |
+| **inc/dec** | インクリメント/デクリメント | `samples/macro_inc_dec.treep` |
+
+実行例:
+```bash
+sbt "run run samples/macro_assert.treep"  # アサーションのテスト
+sbt "run run samples/macro_debug.treep"   # 42, hello, 52 と出力
+sbt "run run samples/macro_inc_dec.treep" # 0, 1, 2, 1 と出力
+```
+
+### 制限事項
+
+現在の実装では、以下の制限があります:
+- **ブロック構文**: `when(cond) { body }` のような、引数の後にブロックが続く構文は実験的サポート
+- **複雑なパターン**: ネストしたパターンや条件付きパターンは未サポート
+
 ---
 
 ## 標準ライブラリ早見表

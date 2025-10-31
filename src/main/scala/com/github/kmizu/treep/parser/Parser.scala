@@ -340,7 +340,17 @@ object Parser:
         // lambda or grouped expr
         val saveI = i
         next()
-        if at("IDENT") then
+        // Check for empty parameter list: () -> { ... }
+        if at(")") then
+          val saveI2 = i
+          next()
+          if at("->") then
+            next()
+            val body = block()
+            return Lambda(Nil, body)
+          // rollback if not lambda
+          i = saveI2
+        else if at("IDENT") then
           // attempt param list: (x: T[, y: U]*) -> { ... }
           val paramsBuf = scala.collection.mutable.ListBuffer.empty[Param]
           val saveI2 = i
