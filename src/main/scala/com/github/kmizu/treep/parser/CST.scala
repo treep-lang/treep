@@ -40,7 +40,7 @@ object CST:
   final case class StrLit(value: String) extends Expr
   final case class BoolLit(value: Boolean) extends Expr
   final case class Var(name: String) extends Expr
-  final case class Call(name: String, args: List[Expr]) extends Expr
+  final case class Call(name: String, args: List[Expr], blockArg: Option[Block] = None) extends Expr
   final case class MethodCall(recv: Expr, name: String, args: List[Expr]) extends Expr
   final case class Index(target: Expr, key: Expr) extends Expr
   final case class Field(target: Expr, name: String) extends Expr

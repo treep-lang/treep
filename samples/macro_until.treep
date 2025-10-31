@@ -1,5 +1,5 @@
 // until macro: negated while loop
-// Usage: until(condition, () -> { body })
+// Usage: until(condition) { body }
 
 macro until {
   pattern: until($cond, $body)
@@ -13,10 +13,10 @@ macro until {
 def test() returns: Unit {
   let x = 0
 
-  until(x >= 5, () -> {
+  until(x >= 5) {
     println(x)
     x = x + 1
-  })
+  }
 
   println("Done!")
 }

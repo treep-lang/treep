@@ -1,5 +1,5 @@
 // when macro: if without else branch
-// Usage: when(condition, () -> { body })
+// Usage: when(condition) { body }
 
 macro when {
   pattern: when($cond, $body)
@@ -13,13 +13,13 @@ macro when {
 def test() returns: Unit {
   let x = 5
 
-  when(x > 0, () -> {
+  when(x > 0) {
     println("x is positive")
-  })
+  }
 
-  when(x == 5, () -> {
+  when(x == 5) {
     println("x equals 5")
-  })
+  }
 }
 
 def main() returns: Unit {

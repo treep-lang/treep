@@ -1,5 +1,5 @@
 // ifZero macro: check if value is zero
-// Usage: ifZero(value, () -> { body })
+// Usage: ifZero(value) { body }
 
 macro ifZero {
   pattern: ifZero($value, $body)
@@ -15,19 +15,19 @@ def test() returns: Unit {
   let y = 5
 
   println("Before first ifZero")
-  ifZero(x, () -> {
+  ifZero(x) {
     println("x is zero")
-  })
+  }
 
   println("Before second ifZero")
-  ifZero(y, () -> {
+  ifZero(y) {
     println("y is zero")
-  })
+  }
 
   println("Before third ifZero")
-  ifZero(0, () -> {
+  ifZero(0) {
     println("literal zero")
-  })
+  }
 
   println("After all ifZero")
 }

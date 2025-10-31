@@ -382,7 +382,9 @@ object Parser:
             as += expr()
             while at(",") do { next(); as += expr() }
           eat(")")
-          Call(name, as.toList)
+          // Check for block argument: name(args) { block }
+          val blockArg = if at("{") then Some(block()) else None
+          Call(name, as.toList, blockArg)
         else Var(name)
       case "[" =>
         next()

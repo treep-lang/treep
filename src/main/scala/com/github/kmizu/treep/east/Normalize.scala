@@ -111,7 +111,14 @@ object Normalize:
     case C.StrLit(s)    => Element("string", attrs = List(Attr("value", s)))
     case C.BoolLit(b)   => Element("bool", attrs = List(Attr("value", b.toString)))
     case C.Var(n)       => Element("var", name = Some(n))
-    case C.Call(n, as)  => Element("call", name = Some(n), children = as.map(normExpr))
+    case C.Call(n, as, blockOpt)  =>
+      // If there's a block argument, convert it to a zero-arg lambda and append to args
+      val allArgs = blockOpt match
+        case Some(blk) =>
+          val lambda = Element("lambda", attrs = List(Attr("params", "")), children = List(normBlock(blk)))
+          as.map(normExpr) :+ lambda
+        case None => as.map(normExpr)
+      Element("call", name = Some(n), children = allArgs)
     case C.MethodCall(recv, n, as) =>
       Element("mcall", name = Some(n), children = normExpr(recv) :: as.map(normExpr))
     case C.Unary(op, x) => Element("call", name = Some(op), children = List(normExpr(x)))
