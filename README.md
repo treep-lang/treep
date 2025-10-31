@@ -180,7 +180,7 @@ x is not zero
 
 ### 動作確認済みマクロ ✅
 
-以下のマクロは完全に動作確認済みです:
+以下の9個のマクロは完全に動作確認済みです:
 
 | マクロ | 用途 | サンプルファイル |
 |--------|------|------------------|
@@ -189,18 +189,26 @@ x is not zero
 | **log** | ロギング | `samples/macro_log.treep` |
 | **trace** | トレーシング | `samples/macro_trace.treep` |
 | **inc/dec** | インクリメント/デクリメント | `samples/macro_inc_dec.treep` |
+| **ifZero** | ゼロチェック | `samples/macro_ifzero.treep` |
+| **ifPositive** | 正数チェック | `samples/macro_ifpositive.treep` |
+| **until** | until ループ（否定while） | `samples/macro_until.treep` |
+| **when** | when マクロ（else なし if） | `samples/macro_when.treep` |
 
 実行例:
 ```bash
-sbt "run run samples/macro_assert.treep"  # アサーションのテスト
-sbt "run run samples/macro_debug.treep"   # 42, hello, 52 と出力
-sbt "run run samples/macro_inc_dec.treep" # 0, 1, 2, 1 と出力
+sbt "run run samples/macro_assert.treep"     # アサーションのテスト
+sbt "run run samples/macro_debug.treep"      # 42, hello, 52 と出力
+sbt "run run samples/macro_inc_dec.treep"    # 0, 1, 2, 1 と出力
+sbt "run run samples/macro_ifzero.treep"     # x is zero, literal zero と出力
+sbt "run run samples/macro_until.treep"      # 0, 1, 2, 3, 4, Done! と出力
+sbt "run run samples/macro_when.treep"       # x is positive, x equals 5 と出力
 ```
 
 ### 制限事項
 
 現在の実装では、以下の制限があります:
-- **ブロック構文**: `when(cond) { body }` のような、引数の後にブロックが続く構文は実験的サポート
+- **ラムダ構文が必要**: ブロックを渡すマクロは `() -> { body }` のラムダ構文を使用（例: `when(cond, () -> { body })`）
+- **ラムダ内returnの制限**: ラムダ内の `return` は外側の関数からは抜けません
 - **複雑なパターン**: ネストしたパターンや条件付きパターンは未サポート
 
 ---

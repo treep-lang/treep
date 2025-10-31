@@ -1,35 +1,35 @@
 // ifPositive macro: check if value is positive
-// Usage: ifPositive(value) { body }
+// Usage: ifPositive(value, () -> { body })
 
 macro ifPositive {
-  pattern: ifPositive($value) { $body }
+  pattern: ifPositive($value, $body)
   expand: {
     if (value > 0) {
-      body
+      body()
     }
   }
 }
 
 def test() returns: Unit {
   let x = 5
-  let y = -3
+  let y = 0 - 3
   let z = 0
 
-  ifPositive(x) {
+  ifPositive(x, () -> {
     println("x is positive")
-  }
+  })
 
-  ifPositive(y) {
+  ifPositive(y, () -> {
     println("y is positive")
-  }
+  })
 
-  ifPositive(z) {
+  ifPositive(z, () -> {
     println("z is positive")
-  }
+  })
 
-  ifPositive(10) {
+  ifPositive(10, () -> {
     println("10 is positive")
-  }
+  })
 }
 
 def main() returns: Unit {

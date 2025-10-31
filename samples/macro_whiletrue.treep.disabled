@@ -1,11 +1,11 @@
 // whileTrue macro: infinite loop (with break via return)
-// Usage: whileTrue { body }
+// Usage: whileTrue(() -> { body })
 
 macro whileTrue {
-  pattern: whileTrue { $body }
+  pattern: whileTrue($body)
   expand: {
     while (true) {
-      body
+      body()
     }
   }
 }
@@ -13,13 +13,13 @@ macro whileTrue {
 def test() returns: Int {
   let x = 0
 
-  whileTrue {
+  whileTrue(() -> {
     println(x)
     x = x + 1
     if (x >= 3) {
       return x
     }
-  }
+  })
 
   return 0
 }
