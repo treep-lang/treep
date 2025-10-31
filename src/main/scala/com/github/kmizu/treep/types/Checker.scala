@@ -38,6 +38,58 @@ object Checker:
 
     def addDiag(msg: String, path: List[String]): Unit = diags += Diag(msg, path)
 
+    // Infer return type from function body by analyzing return statements
+    def inferReturnTypeFromBody(fnBody: Element, paramTypes: List[T], paramNames: List[String]): Option[T] =
+      val returns = scala.collection.mutable.ListBuffer.empty[Element]
+
+      def collectReturns(e: Element): Unit =
+        if e.kind == "return" then returns += e
+        e.children.foreach(collectReturns)
+
+      collectReturns(fnBody)
+
+      if returns.isEmpty then
+        Some(T.TUnit) // No return statement means Unit
+      else
+        // Try to infer types from return expressions
+        val paramMap = paramNames.zip(paramTypes).toMap
+        val returnTypes = returns.flatMap { ret =>
+          ret.children.headOption.flatMap { expr =>
+            tryInferSimpleExpr(expr, paramMap)
+          }
+        }
+
+        if returnTypes.isEmpty then
+          None // Cannot infer
+        else if returnTypes.tail.forall(_ == returnTypes.head) then
+          Some(returnTypes.head) // All returns have same type
+        else
+          None // Inconsistent return types
+
+    // Simple expression type inference for literals and basic operations
+    def tryInferSimpleExpr(e: Element, params: Map[String, T]): Option[T] = e.kind match
+      case "int" => Some(T.TInt)
+      case "bool" => Some(T.TBool)
+      case "string" => Some(T.TString)
+      case "var" =>
+        // Check if it's a parameter
+        e.name.flatMap(params.get)
+      case "list" =>
+        val elemTypes = e.children.flatMap(ch => tryInferSimpleExpr(ch, params))
+        if elemTypes.nonEmpty && elemTypes.tail.forall(_ == elemTypes.head) then
+          Some(T.TList(elemTypes.head))
+        else
+          None
+      case "call" if e.name.contains("+") || e.name.contains("-") || e.name.contains("*") || e.name.contains("/") =>
+        // Binary arithmetic operations return Int
+        val argTypes = e.children.flatMap(ch => tryInferSimpleExpr(ch, params))
+        if argTypes.forall(_ == T.TInt) then Some(T.TInt) else None
+      case "call" if e.name.contains("==") || e.name.contains("!=") || e.name.contains("<") || e.name.contains(">") =>
+        Some(T.TBool) // Comparison operations return Bool
+      case "call" if e.name.contains("&&") || e.name.contains("||") =>
+        Some(T.TBool) // Logical operations return Bool
+      case _ => None // Cannot infer for complex expressions
+
     def unify(t1: T, t2: T, path: List[String]): Unit =
       Infer.unify(t1, t2) match
         case Left(err) => addDiag(s"type mismatch: ${t1} vs ${t2}", path)
@@ -183,7 +235,13 @@ object Checker:
         val params: List[T] =
           d.getAttr("params").filter(_.nonEmpty)
             .map(pStr => ParamParser.parseParamTypes(pStr).flatMap(parseType)).getOrElse(Nil)
-        val ret: T = d.getAttr("returns").flatMap(parseType).getOrElse(T.TUnit)
+        val ret: T = d.getAttr("returns").flatMap(parseType).getOrElse {
+          // Try to infer return type from function body
+          val body = d.children.find(_.kind == "block").getOrElse(Element("block"))
+          val paramNames = d.getAttr("params").filter(_.nonEmpty)
+            .map(pStr => ParamParser.parseParamNames(pStr)).getOrElse(Nil)
+          inferReturnTypeFromBody(body, params, paramNames).getOrElse(T.TUnit)
+        }
         name -> (params -> ret)
     }.toMap
 
@@ -260,7 +318,8 @@ object Checker:
       ch.kind match
         case "def" =>
           val name = ch.name.getOrElse("?")
-          val retT: T = ch.getAttr("returns").flatMap(parseType).getOrElse(T.TUnit)
+          // Use the inferred return type from funSigs
+          val retT: T = funSigs.get(name).map(_._2).getOrElse(T.TUnit)
           val params: List[(String,T)] =
             ch.getAttr("params").filter(_.nonEmpty)
               .map(pStr => ParamParser.parseParams(pStr).flatMap { case (n, tStr) =>

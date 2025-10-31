@@ -1,0 +1,21 @@
+// Test type inference without explicit type annotations
+
+// Test 1: Function without returns annotation
+def add(x: Int, y: Int) {
+  return x + y
+}
+
+// Test 2: Function with inferred return type
+def double(n: Int) {
+  return n * 2
+}
+
+def main() returns: Int {
+  let result1 = add(3, 5)
+  println(result1)
+
+  let result2 = double(10)
+  println(result2)
+
+  return 0
+}
