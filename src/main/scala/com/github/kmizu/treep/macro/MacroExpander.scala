@@ -76,10 +76,10 @@ object MacroExpander:
     val expansion = macroEntry.expansion
 
     // Match and expand
-    val expanded = MacroPattern.expandMacro(parsedPattern, expansion, callSite)
+    MacroPattern.expandMacro(parsedPattern, expansion, callSite)
 
-    // Recursively expand the result in case it contains more macros
-    expandAll(expanded)
+    // Note: We don't recursively expand here to avoid infinite loops.
+    // Nested macro expansion will be handled by the outer expandAll loop.
 
   /**
    * Post-process to unwrap expr(assign(...)) -> assign(...)

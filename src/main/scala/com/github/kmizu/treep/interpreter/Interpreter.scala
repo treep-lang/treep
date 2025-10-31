@@ -207,27 +207,36 @@ object Interpreter:
       val n = e.getAttr("name").getOrElse(throw MissingAttribute("name", "field access"))
       evalExpr(env, Element("index", children = List(Element("target", children = List(t)), Element("key", children = List(Element("string", attrs = List(Attr("value", n))))))))
     case "call"   =>
-      val name = e.name.getOrElse(throw MissingAttribute("name", "function call"))
-      if name == "=" then
-        // assignment: left must be var; evaluate rhs then assign
-        val lhs = e.children.headOption.getOrElse(throw MissingElement("lhs", "assignment"))
-        val rhs = e.children.lift(1).getOrElse(throw MissingElement("rhs", "assignment"))
-        val rhsV = evalExpr(env, rhs)
-        lhs.kind match
-          case "var" =>
-            val varName = lhs.name.getOrElse(throw MissingAttribute("name", "assignment target"))
-            env.assign(varName, rhsV)
-            rhsV
-          case _ => throw AssignmentError("assignment target must be a variable")
-      else if name == "&&" then
-        val l = evalExpr(env, e.children.head)
-        if !asBool(l) then VBool(false) else VBool(asBool(evalExpr(env, e.children(1))))
-      else if name == "||" then
-        val l = evalExpr(env, e.children.head)
-        if asBool(l) then VBool(true) else VBool(asBool(evalExpr(env, e.children(1))))
-      else
-        val args = e.children.map(ch => evalExpr(env, ch))
-        evalCall(env, name, args)
+      e.name match
+        case None =>
+          // Anonymous function call: first child is the function, rest are arguments
+          val funcExpr = e.children.headOption.getOrElse(throw MissingElement("function", "anonymous call"))
+          val funcValue = evalExpr(env, funcExpr)
+          val args = e.children.tail.map(ch => evalExpr(env, ch))
+          funcValue match
+            case fn: VFunc => callFunc(fn, args)
+            case _ => throw InvalidOperation("call", "expected function value")
+        case Some(name) =>
+          if name == "=" then
+            // assignment: left must be var; evaluate rhs then assign
+            val lhs = e.children.headOption.getOrElse(throw MissingElement("lhs", "assignment"))
+            val rhs = e.children.lift(1).getOrElse(throw MissingElement("rhs", "assignment"))
+            val rhsV = evalExpr(env, rhs)
+            lhs.kind match
+              case "var" =>
+                val varName = lhs.name.getOrElse(throw MissingAttribute("name", "assignment target"))
+                env.assign(varName, rhsV)
+                rhsV
+              case _ => throw AssignmentError("assignment target must be a variable")
+          else if name == "&&" then
+            val l = evalExpr(env, e.children.head)
+            if !asBool(l) then VBool(false) else VBool(asBool(evalExpr(env, e.children(1))))
+          else if name == "||" then
+            val l = evalExpr(env, e.children.head)
+            if asBool(l) then VBool(true) else VBool(asBool(evalExpr(env, e.children(1))))
+          else
+            val args = e.children.map(ch => evalExpr(env, ch))
+            evalCall(env, name, args)
     case "mcall" =>
       val name = e.name.getOrElse(throw MissingAttribute("name", "method call"))
       val recv = e.children.headOption.map(evalExpr(env, _)).getOrElse(throw MissingElement("receiver", "method call"))
@@ -299,6 +308,10 @@ object Interpreter:
         .orElse(e.getAttr("param").map(a => List(a)))
         .getOrElse(Nil)
       VFunc(params, body, env)
+    case "block" =>
+      // Evaluate block as expression (needed for macro expansion)
+      evalBlock(env, e)
+      VUnit
     case other => VUnit
 
   // Arithmetic operators
@@ -348,6 +361,10 @@ object Interpreter:
     case "||" => args match
       case List(VBool(a), VBool(b)) => VBool(a || b)
       case _ => throw TypeMismatchError("(Bool, Bool)", args.toString, Some("||"))
+    case "!" => args match
+      case List(VBool(a)) => VBool(!a)
+      case List(VInt(n)) => VBool(n == 0)
+      case _ => throw TypeMismatchError("Bool or Int", args.toString, Some("!"))
 
   // Iterator functions
   private def evalIteratorFunc(name: String, args: List[Value]): Value = name match
@@ -414,7 +431,7 @@ object Interpreter:
     // Try each category of operators
     if Set("+", "-", "*", "/", "%").contains(name) then
       evalArithmeticOp(name, args)
-    else if Set("==", "!=", ">", ">=", "<", "<=", "&&", "||").contains(name) then
+    else if Set("==", "!=", ">", ">=", "<", "<=", "&&", "||", "!").contains(name) then
       evalComparisonOp(name, args)
     else if Set("iter", "hasNext", "next").contains(name) then
       evalIteratorFunc(name, args)

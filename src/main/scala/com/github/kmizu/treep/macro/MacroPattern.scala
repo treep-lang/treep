@@ -105,6 +105,21 @@ object MacroPattern:
           case other => other
         template.copy(name = newName, children = template.children.map(substitute(_, bindings)))
 
+      case "call" =>
+        // Special handling for call nodes: if the function is a pattern variable, replace it
+        // This handles cases like body() where body is a lambda
+        template.name match
+          case Some(funcName) if bindings.contains(funcName) =>
+            // The function name is a pattern variable - create an immediate call
+            val boundValue = bindings(funcName)
+            // Substitute in arguments
+            val substArgs = template.children.map(substitute(_, bindings))
+            // Create a call node with the bound value as first child and args as rest
+            Element("call", name = None, children = boundValue :: substArgs)
+          case _ =>
+            // Regular call - recursively substitute
+            template.copy(children = template.children.map(substitute(_, bindings)))
+
       case _ =>
         // Recursively substitute in children
         template.copy(children = template.children.map(substitute(_, bindings)))
@@ -120,17 +135,7 @@ object MacroPattern:
   def expandMacro(pattern: ParsedPattern, expansion: Element, callSite: Element): Element =
     matchPattern(pattern, callSite) match
       case Some(bindings) =>
-        val substituted = substitute(expansion, bindings)
-        // If expansion is a block with single child, unwrap it
-        if substituted.kind == "block" && substituted.children.size == 1 then
-          val unwrapped = substituted.children.head
-          // If the unwrapped node is an expr node with single child, unwrap it too
-          if unwrapped.kind == "expr" && unwrapped.children.size == 1 then
-            unwrapped.children.head
-          else
-            unwrapped
-        else
-          substituted
+        substitute(expansion, bindings)
       case None =>
         // Pattern didn't match, return original
         callSite

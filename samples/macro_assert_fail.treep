@@ -1,0 +1,15 @@
+// Test assert macro with failing assertion
+macro assert {
+  pattern: assert($cond)
+  expand: {
+    if (!cond) {
+      println("Assertion failed!")
+    }
+  }
+}
+
+def main() returns: Unit {
+  println("=== assert fail test ===")
+  assert(1 == 2)
+  println("After assertion")
+}
