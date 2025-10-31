@@ -26,7 +26,8 @@ object MacroExpander:
         // Check if this is a user-defined macro invocation
         val name = el.name.getOrElse("")
         MacroRegistry.lookup(name) match
-          case Some(macroEntry) => expandUserMacro(macroEntry, el)
+          case Some(macroEntry) =>
+            expandUserMacro(macroEntry, el)
           case None => el.copy(children = el.children.map(expandAll))
       case _ => el.copy(children = el.children.map(expandAll))
 

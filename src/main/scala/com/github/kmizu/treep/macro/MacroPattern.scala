@@ -23,7 +23,7 @@ object MacroPattern:
   /** Binding from pattern variable to actual EAST element */
   type Bindings = Map[String, Element]
 
-  private val varPattern: Regex = """\$([a-zA-Z_][a-zA-Z0-9_]*)(?:\s*:\s*([a-zA-Z_][a-zA-Z0-9_]*))?""".r
+  private val varPattern: Regex = """\$\s*([a-zA-Z_][a-zA-Z0-9_]*)(?:\s*:\s*([a-zA-Z_][a-zA-Z0-9_]*))?""".r
 
   /** Parse a macro pattern string into structured form */
   def parsePattern(pattern: String): ParsedPattern =
@@ -70,7 +70,8 @@ object MacroPattern:
         // Check if we have the right number of arguments
         if bindings.size == pattern.variables.length then
           Some(bindings.toMap)
-        else None
+        else
+          None
 
       case _ =>
         // For other node types, we'd need more sophisticated matching
@@ -95,6 +96,15 @@ object MacroPattern:
             // Keep the original variable
             template
 
+      case "assign" =>
+        // For assign nodes, substitute the target variable name if it's a pattern variable
+        val newName = template.name match
+          case Some(varName) if bindings.contains(varName) =>
+            // Extract the actual variable name from the bound var node
+            bindings(varName).name
+          case other => other
+        template.copy(name = newName, children = template.children.map(substitute(_, bindings)))
+
       case _ =>
         // Recursively substitute in children
         template.copy(children = template.children.map(substitute(_, bindings)))
@@ -113,7 +123,12 @@ object MacroPattern:
         val substituted = substitute(expansion, bindings)
         // If expansion is a block with single child, unwrap it
         if substituted.kind == "block" && substituted.children.size == 1 then
-          substituted.children.head
+          val unwrapped = substituted.children.head
+          // If the unwrapped node is an expr node with single child, unwrap it too
+          if unwrapped.kind == "expr" && unwrapped.children.size == 1 then
+            unwrapped.children.head
+          else
+            unwrapped
         else
           substituted
       case None =>
