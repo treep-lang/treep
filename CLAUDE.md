@@ -20,7 +20,6 @@ sbt test                    # Run all MUnit tests
 
 ### CLI Commands
 ```bash
-sbt "run new"               # Generate samples/hello.treep
 sbt "run build"             # Parse, expand macros, typecheck all .treep files
 sbt "run run"               # Execute all .treep files with zero-arg main()
 sbt "run run path/to/file.treep"  # Execute specific file

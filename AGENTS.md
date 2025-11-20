@@ -12,7 +12,6 @@
 ## Build, Test, and Development Commands
 - Build: `sbt compile`
 - Run CLI:
-  - `sbt "run new"` – サンプル `samples/hello.treep` を生成
   - `sbt "run build"` – `*.treep` を解析→マクロ展開まで検証（生成物なし）
   - `sbt "run run"` – 素朴インタプリタで実行
 - Format/Lint: 現状なし（Scala 側は標準オプションのみ）。

@@ -38,19 +38,15 @@ treep は、表層構文 → EAST 正規化 → マクロ展開 → HM 型推論
    ```bash
    sbt compile
    ```
-2. サンプルを生成（`samples/hello.treep` を作成）
-   ```bash
-   sbt "run new"
-   ```
-3. 作成したサンプルを実行
+2. サンプルを実行
    ```bash
    sbt "run run samples/hello.treep"
    ```
-4. 全サンプルを一括で解析／型検査
+3. 全サンプルを一括で解析／型検査
    ```bash
    sbt "run build"
    ```
-5. テストの実行（MUnit）
+4. テストの実行（MUnit）
    ```bash
    sbt test
    ```
@@ -60,7 +56,6 @@ treep は、表層構文 → EAST 正規化 → マクロ展開 → HM 型推論
 ## CLI コマンド
 | コマンド | 説明 |
 | --- | --- |
-| `sbt "run new"` | `samples/hello.treep` を生成。既存ファイルがある場合は上書き。 |
 | `sbt "run build"` | 現在のディレクトリ配下の `.treep` を探索し、構文・マクロ展開・型検査を実施。 |
 | `sbt "run run"` | `.treep` を探索し、ゼロ引数 `main` を持つファイルのみ実行。 |
 | `sbt "run run path/to/foo.treep"` | 指定したファイルを解析・型検査後に実行。 |
