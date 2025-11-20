@@ -136,25 +136,6 @@ object Checker:
             val a = T.TVar(-103); val b = T.TVar(-104)
             unify(args.head, T.TTuple2(a, b), path)
             b
-          case "+" =>
-            args match
-              case t1 :: t2 :: Nil =>
-                val addPath = path :+ "+"
-                (t1, t2) match
-                  case (T.TString, T.TString) => T.TString
-                  case (T.TInt, T.TInt) => T.TInt
-                  case (T.TString, other) =>
-                    unify(other, T.TString, addPath); T.TString
-                  case (other, T.TString) =>
-                    unify(other, T.TString, addPath); T.TString
-                  case _ =>
-                    unify(t1, T.TInt, addPath)
-                    unify(t2, T.TInt, addPath)
-                    T.TInt
-              case _ =>
-                addDiag("operator + expects two operands", path)
-                T.TVar(-1)
-          case "-" | "*" | "/" | "%" => args.foreach(unify(_, T.TInt, path)); T.TInt
           case ">" | ">=" | "<" | "<=" => args.foreach(unify(_, T.TInt, path)); T.TBool
           case "==" | "!=" =>
             if args.length == 2 then unify(args.head, args(1), path)

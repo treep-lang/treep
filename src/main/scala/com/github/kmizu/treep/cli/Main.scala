@@ -23,7 +23,6 @@ object Main:
     if args.isEmpty then
       usage(); return
     args(0) match
-      case "new"  => cmdNew(args.drop(1))
       case "build"=> cmdBuild(args.drop(1))
       case "run"  => cmdRun(args.drop(1))
       case "fmt"  => cmdFmt(args.drop(1))
@@ -31,37 +30,38 @@ object Main:
       case _      => usage()
 
   private def usage(): Unit =
-    println("treep new|build|run|fmt|test")
-
-  private def cmdNew(rest: Array[String]): Unit =
-    val path = Paths.get("samples/hello.treep")
-    Files.createDirectories(path.getParent)
-    val content = """
-def main() returns: Int {
-  return 0
-}
-""".stripLeading()
-    Files.writeString(path, content, StandardCharsets.UTF_8)
-    println(s"Created ${path}")
+    println("treep build|run|fmt|test")
 
   private def cmdBuild(rest: Array[String]): Unit =
-    val files = collectTreepFiles(rest)
-    if files.isEmpty then
-      println("No .treep files found. Try `treep new`.")
-    else
-      files.foreach { path =>
-        val analysis = analyzeFile(path)
-        val label = relativePath(path)
-        if analysis.parseErrors.nonEmpty then
-          println(s"Checked ${label} with ${analysis.parseErrors.size} parse error(s):")
-          reportParseDiagnostics(analysis.parseErrors)
-        if analysis.typeDiags.nonEmpty then
-          println(s"Typecheck reported ${analysis.typeDiags.size} issue(s) in ${label}:")
-          reportTypeDiagnostics(analysis.typeDiags)
-        else if analysis.parseErrors.isEmpty then
-          println(s"Checked ${label}")
-      }
-      println("Build succeeded.")
+    val cwd = Paths.get("")
+    val matcher = FileSystems.getDefault.getPathMatcher("glob:**/*.treep")
+    val outDir = cwd.resolve("out")
+    Files.createDirectories(outDir)
+    val stream = Files.walk(cwd)
+    try
+      val files = stream.iterator().asScala.toList.filter(p => Files.isRegularFile(p) && matcher.matches(p))
+      if files.isEmpty then
+        println("No .treep files found. Try `treep new`.")
+      else
+        // Build フェーズは構文/マクロ展開の検証のみ（生成物なし）
+        files.foreach { in =>
+          val src = Files.readString(in)
+          val cst = Parser.parseProgram(src, in.toString)
+          val east = Normalize.toEAST(cst)
+          val expanded = MacroExpander.expand(east)
+          val typeDiags = Checker.check(expanded)
+          val errs = Parser.lastErrors
+          if errs.nonEmpty then
+            println(s"Checked ${in} with ${errs.size} parse error(s):")
+            errs.foreach(e => println(s"  [parse] ${e.message} at ${e.line}:${e.col}"))
+          if typeDiags.nonEmpty then
+            println(s"Typecheck reported ${typeDiags.size} issue(s)")
+          else
+            println(s"Checked ${in}")
+        }
+        println("Build succeeded.")
+    finally
+      stream.close()
 
   private def cmdRun(rest: Array[String]): Unit =
     val files = collectTreepFiles(rest)
