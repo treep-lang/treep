@@ -10,6 +10,8 @@ object CST:
   final case class ConstDecl(name: String, annot: Option[TypeAnnot], init: Expr, span: Option[Span] = None) extends TopDecl
   final case class ModuleDecl(name: String, body: Block, span: Option[Span] = None) extends TopDecl
   final case class StructDef(name: String, fields: List[(String, TypeAnnot)], span: Option[Span] = None) extends TopDecl
+  final case class ExtensionDecl(receiverParam: String, receiverType: TypeAnnot, methods: List[FunDef], span: Option[Span] = None) extends TopDecl
+  final case class MacroDef(name: String, pattern: String, expansion: Block, span: Option[Span] = None) extends TopDecl
 
   final case class Param(name: String, tpe: TypeAnnot)
   final case class TypeAnnot(name: String, args: List[TypeAnnot] = Nil) // Simple or applied

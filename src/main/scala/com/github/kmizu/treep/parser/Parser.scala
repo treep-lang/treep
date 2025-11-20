@@ -3,18 +3,19 @@ package com.github.kmizu.treep.parser
 import com.github.kmizu.treep.lexer.*
 import com.github.kmizu.treep.parser.CST.*
 import com.github.kmizu.treep.parser.CST as C
+import java.util.concurrent.atomic.AtomicReference
 
 object Parser:
   final case class ParseDiag(message: String, line: Int, col: Int)
 
-  @volatile private var recentErrors: List[ParseDiag] = Nil
-  def lastErrors: List[ParseDiag] = recentErrors
+  private val recentErrors = new AtomicReference[List[ParseDiag]](Nil)
+  def lastErrors: List[ParseDiag] = recentErrors.get()
 
   def parseProgram(src: String, file: String = "<stdin>"): Program =
     val tokens = Lexer.tokenize(src, file).toVector
     val p = new P(tokens, file)
     val prog = p.program()
-    recentErrors = p.errors.toList
+    recentErrors.set(p.errors.toList)
     prog
 
   def parseProgramWithDiagnostics(src: String, file: String = "<stdin>"): (Program, List[ParseDiag]) =
@@ -22,7 +23,7 @@ object Parser:
     val p = new P(tokens, file)
     val prog = p.program()
     val errs = p.errors.toList
-    recentErrors = errs
+    recentErrors.set(errs)
     (prog, errs)
 
   private final class P(tokens: Vector[Token], fileName: String):
@@ -43,7 +44,7 @@ object Parser:
       throw e
 
     private def synchronizeTop(): Unit =
-      val sync = Set("DEF", "CONST", "MODULE", "EOF")
+      val sync = Set("DEF", "CONST", "MODULE", "EXTENSION", "MACRO", "EOF")
       while !sync.contains(cur.kind) do i += 1
 
     private def synchronizeStmt(): Unit =
@@ -55,10 +56,12 @@ object Parser:
       while !at("EOF") do
         try
           cur.kind match
-            case "DEF"    => tops += funDef()
-            case "CONST"  => tops += constDecl()
-            case "MODULE" => tops += moduleDecl()
-            case "STRUCT" => tops += structDef()
+            case "DEF"       => tops += funDef()
+            case "CONST"     => tops += constDecl()
+            case "MODULE"    => tops += moduleDecl()
+            case "STRUCT"    => tops += structDef()
+            case "EXTENSION" => tops += extensionDecl()
+            case "MACRO"     => tops += macroDef()
             case other     =>
               report(s"unexpected token at top-level: ${other}")
               synchronizeTop()
@@ -106,6 +109,55 @@ object Parser:
         while at(",") do { next(); fields += fieldDecl() }
       eat("}")
       C.StructDef(name, fields.toList, span = Some(C.Span(fileName, tok.line, tok.col)))
+
+    private def extensionDecl(): TopDecl =
+      val tok = eat("EXTENSION")
+      eat("(")
+      val receiverParam = ident()
+      eat(":")
+      val receiverType = typeAnnot()
+      eat(")")
+      eat("{")
+      val methods = scala.collection.mutable.ListBuffer.empty[FunDef]
+      while !at("}") do
+        try
+          if at("DEF") then
+            funDef() match
+              case f: FunDef => methods += f
+              case other => error(s"expected FunDef, got ${other}")
+          else error(s"expected def in extension block, found ${cur.kind}")
+        catch
+          case _: ParseException =>
+            synchronizeStmt()
+      eat("}")
+      ExtensionDecl(receiverParam, receiverType, methods.toList, span = Some(C.Span(fileName, tok.line, tok.col)))
+
+    private def macroDef(): TopDecl =
+      val tok = eat("MACRO")
+      val name = ident()
+      eat("{")
+
+      // Parse pattern: <pattern text>
+      eat("PATTERN")
+      eat(":")
+      val patternStart = i
+      var patternText = ""
+      // Collect tokens until we see "expand" or "}"
+      while !at("EXPAND") && !at("}") && !at("EOF") do
+        patternText += cur.lexeme
+        if !at("EXPAND") && !at("}") then patternText += " "
+        next()
+      patternText = patternText.trim
+
+      // Parse expand: <block>
+      var expansionBlock = Block(Nil)
+      if at("EXPAND") then
+        eat("EXPAND")
+        eat(":")
+        expansionBlock = block()
+
+      eat("}")
+      MacroDef(name, patternText, expansionBlock, span = Some(C.Span(fileName, tok.line, tok.col)))
 
     private def fieldDecl(): (String, TypeAnnot) =
       val n = ident(); eat(":"); (n, typeAnnot())

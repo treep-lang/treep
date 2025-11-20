@@ -4,4 +4,15 @@ def findY() returns: Int {
   if (m.hasKey("y")) { return m["y"] } else { return 0 }
 }
 
+<<<<<<< HEAD
 def main() returns: Int { return findY() }
+=======
+def main() returns: Int {
+  println("keys_hasKey keys:")
+  println(m.keys())
+  let result = findY()
+  println("keys_hasKey result:")
+  println(result)
+  return result
+}
+>>>>>>> aa17f4483079e0ab8e8dc740702d56c5122247d4

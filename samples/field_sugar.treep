@@ -2,5 +2,16 @@ const p = { "x": 7, "y": 8 }
 
 def h() returns: Int { return p.x }
 
+<<<<<<< HEAD
 def main() returns: Int { return h() }
 
+=======
+def main() returns: Int {
+  println("field_sugar record:")
+  println(p)
+  let value = h()
+  println("field_sugar p.x:")
+  println(value)
+  return value
+}
+>>>>>>> aa17f4483079e0ab8e8dc740702d56c5122247d4
