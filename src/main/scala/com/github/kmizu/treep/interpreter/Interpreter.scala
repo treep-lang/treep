@@ -1,7 +1,6 @@
 package com.github.kmizu.treep.interpreter
 
 import com.github.kmizu.treep.east.*
-import com.github.kmizu.treep.east.ParamParser
 import com.github.kmizu.treep.interpreter.*
 
 import scala.collection.mutable
@@ -21,12 +20,6 @@ object Interpreter:
   final case class VTuple2(a: Value, b: Value) extends Value
   final case class VFunc(params: List[String], body: Element, env: Env) extends Value
 
-  final case class RuntimeExtension(
-    methodName: String,
-    receiverParam: String,
-    func: VFunc
-  )
-
   final case class Env(scopes: List[mutable.Map[String, Value]], extensions: List[RuntimeExtension] = Nil):
     def push(): Env = Env(mutable.Map.empty[String, Value] :: scopes, extensions)
     def pop(): Env = Env(scopes.tail, extensions)
@@ -39,6 +32,8 @@ object Interpreter:
 
   object Env:
     def empty: Env = Env(List(mutable.Map.empty[String, Value]), Nil)
+
+  final case class RuntimeExtension(methodName: String, receiverParam: String, func: VFunc)
 
   final case class Return(v: Value) extends Throwable
 
@@ -92,21 +87,6 @@ object Interpreter:
         env.set(cname, v)
       case "module" => el.children.foreach(evalTop)
       case "struct" => () // ignore for now
-      case "extension" =>
-        val receiverParam = el.getAttr("receiver-param").getOrElse("self")
-        el.children.foreach { methodDef =>
-          if methodDef.kind == "def" then
-            val methodName = methodDef.name.getOrElse(throw MissingAttribute("name", "extension method"))
-            val params: List[String] =
-              methodDef.getAttr("params").filter(_.nonEmpty)
-                .map(ParamParser.parseParamNames).getOrElse(Nil)
-            val body = methodDef.children.headOption.getOrElse(Element("block"))
-            // Create a function that takes receiver as first parameter
-            val fullParams = receiverParam :: params
-            val func = VFunc(fullParams, body, env)
-            val extMethod = RuntimeExtension(methodName, receiverParam, func)
-            env = env.addExtension(extMethod)
-        }
       case other => ()
     program.children.foreach(evalTop)
     env
@@ -165,7 +145,6 @@ object Interpreter:
       val tgt = st.getChild("target").getOrElse(throw MissingElement("target", "match statement"))
       val v = evalExpr(env, tgt)
       val cases = st.children.filter(_.kind == "case")
-
       val hit = cases.collectFirst { c =>
         matchPattern(env, c.children.head, v).map { binds => (c.children(1), binds) }
       }.flatten
@@ -207,36 +186,27 @@ object Interpreter:
       val n = e.getAttr("name").getOrElse(throw MissingAttribute("name", "field access"))
       evalExpr(env, Element("index", children = List(Element("target", children = List(t)), Element("key", children = List(Element("string", attrs = List(Attr("value", n))))))))
     case "call"   =>
-      e.name match
-        case None =>
-          // Anonymous function call: first child is the function, rest are arguments
-          val funcExpr = e.children.headOption.getOrElse(throw MissingElement("function", "anonymous call"))
-          val funcValue = evalExpr(env, funcExpr)
-          val args = e.children.tail.map(ch => evalExpr(env, ch))
-          funcValue match
-            case fn: VFunc => callFunc(fn, args)
-            case _ => throw InvalidOperation("call", "expected function value")
-        case Some(name) =>
-          if name == "=" then
-            // assignment: left must be var; evaluate rhs then assign
-            val lhs = e.children.headOption.getOrElse(throw MissingElement("lhs", "assignment"))
-            val rhs = e.children.lift(1).getOrElse(throw MissingElement("rhs", "assignment"))
-            val rhsV = evalExpr(env, rhs)
-            lhs.kind match
-              case "var" =>
-                val varName = lhs.name.getOrElse(throw MissingAttribute("name", "assignment target"))
-                env.assign(varName, rhsV)
-                rhsV
-              case _ => throw AssignmentError("assignment target must be a variable")
-          else if name == "&&" then
-            val l = evalExpr(env, e.children.head)
-            if !asBool(l) then VBool(false) else VBool(asBool(evalExpr(env, e.children(1))))
-          else if name == "||" then
-            val l = evalExpr(env, e.children.head)
-            if asBool(l) then VBool(true) else VBool(asBool(evalExpr(env, e.children(1))))
-          else
-            val args = e.children.map(ch => evalExpr(env, ch))
-            evalCall(env, name, args)
+      val name = e.name.getOrElse(throw MissingAttribute("name", "function call"))
+      if name == "=" then
+        // assignment: left must be var; evaluate rhs then assign
+        val lhs = e.children.headOption.getOrElse(throw MissingElement("lhs", "assignment"))
+        val rhs = e.children.lift(1).getOrElse(throw MissingElement("rhs", "assignment"))
+        val rhsV = evalExpr(env, rhs)
+        lhs.kind match
+          case "var" =>
+            val varName = lhs.name.getOrElse(throw MissingAttribute("name", "assignment target"))
+            env.assign(varName, rhsV)
+            rhsV
+          case _ => throw AssignmentError("assignment target must be a variable")
+      else if name == "&&" then
+        val l = evalExpr(env, e.children.head)
+        if !asBool(l) then VBool(false) else VBool(asBool(evalExpr(env, e.children(1))))
+      else if name == "||" then
+        val l = evalExpr(env, e.children.head)
+        if asBool(l) then VBool(true) else VBool(asBool(evalExpr(env, e.children(1))))
+      else
+        val args = e.children.map(ch => evalExpr(env, ch))
+        evalCall(env, name, args)
     case "mcall" =>
       val name = e.name.getOrElse(throw MissingAttribute("name", "method call"))
       val recv = e.children.headOption.map(evalExpr(env, _)).getOrElse(throw MissingElement("receiver", "method call"))
@@ -259,10 +229,6 @@ object Interpreter:
         case ("tail", VList(xs), Nil) => VList(if xs.nonEmpty then xs.tail else Nil)
         case ("append", VList(xs), List(v)) => VList(xs :+ v)
         case ("concat", VList(xs), List(VList(ys))) => VList(xs ++ ys)
-        case ("join", VList(xs), List(VString(delimiter))) =>
-          VString(xs.map(formatValue).mkString(delimiter))
-        // Dict methods
-        case ("hasKey", VDict(m), List(k)) => VBool(m.contains(k))
         case ("keys", VDict(m), Nil) => VList(m.keys.toList)
         case ("get", VDict(m), List(k)) => m.getOrElse(k, VUnit)
         case ("iter", VDict(m), Nil) => VIter(m.toList.map { case (k, v) => VTuple2(k, v) }, 0)

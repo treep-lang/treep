@@ -173,10 +173,8 @@ def main() returns: Unit {
 実行例: `sbt "run run samples/unless.treep"`
 
 ```
-=== Unless Macro Demo ===
 x is not greater than 10
 x is not zero
-=== Done ===
 ```
 
 ### マクロの仕組み
