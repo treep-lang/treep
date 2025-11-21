@@ -81,4 +81,19 @@ class HMSpec extends FunSuite {
     assertEquals(tf.from, List(TInt, TInt))
     assertEquals(tf.to, TInt)
   }
+
+  test("inferExprWithTypes collects types for each element") {
+    import Type.*
+    val expr = Element("call", name = Some("+"), children = List(
+      Element("int", attrs = List(Attr("value","1"))),
+      Element("int", attrs = List(Attr("value","2")))
+    ))
+    val res = HM.inferExprWithTypes(HM.builtinEnv, expr)
+    assert(res.isRight)
+    val (_, table) = res.toOption.get
+    assertEquals(table.typeOf(expr), Some(TInt))
+    expr.children.foreach { ch =>
+      assertEquals(table.typeOf(ch), Some(TInt))
+    }
+  }
 }

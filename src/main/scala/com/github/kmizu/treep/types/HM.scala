@@ -14,6 +14,26 @@ object HM:
   private val nextRowId = new AtomicInteger(500000)
   private def freshRowId(): Int = nextRowId.incrementAndGet()
 
+  type Recorder = (Element, T) => Unit
+  private val NoOpRecorder: Recorder = (_, _) => ()
+
+  final case class TypeTable(types: Map[Int, T], private val idIndex: java.util.IdentityHashMap[Element, Int]):
+    def idOf(e: Element): Option[Int] = Option(idIndex.get(e))
+    def typeOf(e: Element): Option[T] = idOf(e).flatMap(types.get)
+    def entries: Map[Int, T] = types
+
+  private final class TypeAnnotator:
+    private val ids = new java.util.IdentityHashMap[Element, Int]()
+    private var types: Map[Int, T] = Map.empty
+    private var next: Int = 1
+
+    def record(e: Element, t: T): Unit =
+      val id = ids.computeIfAbsent(e, _ => { val id = next; next += 1; id })
+      types = types.updated(id, t)
+
+    def build(): TypeTable =
+      TypeTable(types, ids.clone().asInstanceOf[java.util.IdentityHashMap[Element, Int]])
+
   private def inst(s: Scheme): T = Infer.instantiate(s, () => nextId.incrementAndGet())
 
   def builtinEnv: Env =
@@ -100,28 +120,43 @@ object HM:
     )
     Env(ops)
 
-  def inferExpr(env: Env, e: Element): InferResult = e.kind match
-    case "int"    => Right(Result(Subst.empty, T.TInt))
-    case "bool"   => Right(Result(Subst.empty, T.TBool))
-    case "string" => Right(Result(Subst.empty, T.TString))
-    case "var"    => inferVariable(env, e)
-    case "dict"   => inferDict(env, e)
-    case "index"  => inferIndexAccess(env, e)
-    case "field"  => inferFieldAccess(env, e)
-    case "lambda" => inferLambda(env, e)
-    case "list"   => inferList(env, e)
-    case "call"   => inferCall(env, e)
-    case "mcall"  => inferMethodCall(env, e)
-    case _        => Right(Result(Subst.empty, fresh()))
+  def inferExpr(env: Env, e: Element): InferResult =
+    given Recorder = NoOpRecorder
+    inferExprInternal(env, e)
 
-  private def inferVariable(env: Env, e: Element): InferResult =
+  def inferExprWithTypes(env: Env, e: Element): Either[TypeError, (Result, TypeTable)] =
+    val annot = new TypeAnnotator
+    given Recorder = (el: Element, t: T) => annot.record(el, t)
+    inferExprInternal(env, e).map { res => (res, annot.build()) }
+
+  private def inferExprInternal(env: Env, e: Element)(using rec: Recorder): InferResult =
+    val out: InferResult = e.kind match
+      case "int"    => Right(Result(Subst.empty, T.TInt))
+      case "bool"   => Right(Result(Subst.empty, T.TBool))
+      case "string" => Right(Result(Subst.empty, T.TString))
+      case "var"    => inferVariable(env, e)
+      case "dict"   => inferDict(env, e)
+      case "index"  => inferIndexAccess(env, e)
+      case "field"  => inferFieldAccess(env, e)
+      case "lambda" => inferLambda(env, e)
+      case "list"   => inferList(env, e)
+      case "call"   => inferCall(env, e)
+      case "mcall"  => inferMethodCall(env, e)
+      case _        => Right(Result(Subst.empty, fresh()))
+    out.map { res =>
+      val finalType = res.subst.apply(res.ty)
+      rec(e, finalType)
+      res
+    }
+
+  private def inferVariable(env: Env, e: Element)(using Recorder): InferResult =
     e.name
       .flatMap(env.lookup)
       .map(inst)
       .toRight(TypeError.Mismatch(T.TVar(-1), T.TVar(-2)))
       .map(t => Result(Subst.empty, t))
 
-  private def inferDict(env: Env, e: Element): InferResult =
+  private def inferDict(env: Env, e: Element)(using Recorder): InferResult =
     def kvOf(pair: Element): Option[(Element, Element)] =
       if pair.children.length >= 2 then Some((pair.children.head, pair.children(1)))
       else
@@ -138,8 +173,8 @@ object HM:
         case Some((kexpr, vexpr)) =>
           for
             (sAcc, kOpt, vOpt) <- accE
-            Result(sK, tK) <- inferExpr(sAcc.applyTo(env), kexpr)
-            Result(sV, tV) <- inferExpr(sK.applyTo(env), vexpr)
+            Result(sK, tK) <- inferExprInternal(sAcc.applyTo(env), kexpr)
+            Result(sV, tV) <- inferExprInternal(sK.applyTo(env), vexpr)
             sK2 <- kOpt.map(kk => Infer.unify(sV.apply(kk), sV.apply(tK))).getOrElse(Right(sV))
             sV2 <- vOpt.map(vv => Infer.unify(sK2.apply(vv), sK2.apply(tV))).getOrElse(Right(sK2))
           yield (sV2, Some(sV2.apply(tK)), Some(sV2.apply(tV)))
@@ -147,12 +182,12 @@ object HM:
 
     res.map { case (s, kOpt, vOpt) => Result(s, T.TDict(kOpt.getOrElse(fresh()), vOpt.getOrElse(fresh()))) }
 
-  private def inferIndexAccess(env: Env, e: Element): InferResult =
+  private def inferIndexAccess(env: Env, e: Element)(using Recorder): InferResult =
     val tE = e.getChild("target").getOrElse(Element("unit"))
     val kE = e.getChild("key").getOrElse(Element("unit"))
     for
-      Result(s1, tT) <- inferExpr(env, tE)
-      Result(s2, tK) <- inferExpr(s1.applyTo(env), kE)
+      Result(s1, tT) <- inferExprInternal(env, tE)
+      Result(s2, tK) <- inferExprInternal(s1.applyTo(env), kE)
       tv = fresh()
       tryDict = Infer.unify(s2.apply(tT), T.TDict(T.TString, tv)).flatMap { sD => Infer.unify(sD.apply(tK), T.TString).map(sK => sK.compose(sD)) }
       res <- tryDict.orElse {
@@ -160,11 +195,11 @@ object HM:
       }
     yield Result(res.compose(s2).compose(s1), res.apply(tv))
 
-  private def inferFieldAccess(env: Env, e: Element): InferResult =
+  private def inferFieldAccess(env: Env, e: Element)(using Recorder): InferResult =
     val tgt = e.children.headOption.getOrElse(Element("unit"))
     val key = e.getAttrOrElse("name", "")
     for
-      Result(s1, tT) <- inferExpr(env, tgt)
+      Result(s1, tT) <- inferExprInternal(env, tgt)
       tv = fresh()
       tryRec = Infer.unify(s1.apply(tT), T.TRecord(Map(key -> tv), Some(freshRowId()))).map(s => Result(s.compose(s1), s.apply(tv)))
       out <- tryRec.orElse {
@@ -172,13 +207,13 @@ object HM:
       }
     yield out
 
-  private def inferLambda(env: Env, e: Element): InferResult =
+  private def inferLambda(env: Env, e: Element)(using Recorder): InferResult =
     val body = e.children.headOption.getOrElse(Element("block"))
     e.getAttr("params") match
       case Some(sv) => inferTypedLambda(env, body, sv)
       case None     => inferSingleParamLambda(env, body, e)
 
-  private def inferTypedLambda(env: Env, body: Element, params: String): InferResult =
+  private def inferTypedLambda(env: Env, body: Element, params: String)(using Recorder): InferResult =
     val namesAndTypes: List[(String, T)] = ParamParser.parseParams(params).flatMap { case (n, tStr) =>
       parseTypeStr(tStr).map(tt => n -> tt)
     }
@@ -192,7 +227,7 @@ object HM:
         val s2 = if !found then Infer.unify(s.apply(retVar), s.apply(T.TUnit)).getOrElse(s) else s
         Right(Result(s2, T.TFun(namesAndTypes.map(nt => s2.apply(nt._2)), s2.apply(retVar))))
 
-  private def inferSingleParamLambda(env: Env, body: Element, e: Element): InferResult =
+  private def inferSingleParamLambda(env: Env, body: Element, e: Element)(using Recorder): InferResult =
     val pName = e.getAttrOrElse("param", "_")
     val pTypeStr = e.getAttr("ptype")
     val pType = pTypeStr.flatMap(parseTypeStr).getOrElse(fresh())
@@ -204,37 +239,37 @@ object HM:
         val s2 = if !found then Infer.unify(s.apply(retVar), s.apply(T.TUnit)).getOrElse(s) else s
         Right(Result(s2, T.TFun(List(s2.apply(pType)), s2.apply(retVar))))
 
-  private def inferList(env: Env, e: Element): InferResult =
+  private def inferList(env: Env, e: Element)(using Recorder): InferResult =
     val init: Either[TypeError, (Subst, Option[T])] = Right(Subst.empty, None)
     val res = e.children.foldLeft(init) { case (accE, ch) =>
       for
         (sAcc, tOpt) <- accE
-        Result(sE, tE) <- inferExpr(sAcc.applyTo(env), ch)
+        Result(sE, tE) <- inferExprInternal(sAcc.applyTo(env), ch)
         sU <- tOpt.map(t0 => Infer.unify(sE.apply(t0), sE.apply(tE))).getOrElse(Right(sE))
       yield (sU, Some(sU.apply(tE)))
     }
     res.map { case (s, tOpt) => Result(s, T.TList(tOpt.getOrElse(fresh()))) }
 
-  private def inferCall(env: Env, e: Element): InferResult =
+  private def inferCall(env: Env, e: Element)(using Recorder): InferResult =
     val name = e.name.getOrElse("?")
     if name == "iter" then
       inferIteratorCall(env, e.children.headOption)
     else
       inferRegularCall(env, name, e.children)
 
-  private def inferIteratorCall(env: Env, argOpt: Option[Element]): InferResult =
+  private def inferIteratorCall(env: Env, argOpt: Option[Element])(using Recorder): InferResult =
     argOpt match
       case None => Left(TypeError.Mismatch(T.TVar(-1), T.TUnit))
       case Some(argE) =>
         for
-          Result(s1, tArg) <- inferExpr(env, argE)
+          Result(s1, tArg) <- inferExprInternal(env, argE)
           a = fresh(); k = fresh(); v = fresh()
           tryList = Infer.unify(s1.apply(tArg), T.TList(a)).map(s => Result(s, T.TIter(s.apply(a))))
           tryDict = Infer.unify(s1.apply(tArg), T.TDict(k, v)).map(s => Result(s, T.TIter(T.TTuple2(s.apply(k), s.apply(v)))))
           out <- tryList.orElse(tryDict).left.map(_ => TypeError.Mismatch(T.TList(fresh()), tArg))
         yield out
 
-  private def inferRegularCall(env: Env, name: String, args: List[Element]): InferResult =
+  private def inferRegularCall(env: Env, name: String, args: List[Element])(using Recorder): InferResult =
     inferArgs(env, args).flatMap { case (sArgs, tArgs) =>
       env.lookup(name).map(inst).toRight(TypeError.Mismatch(T.TVar(-1), T.TVar(-2))).flatMap { fT =>
         val beta = fresh()
@@ -244,25 +279,25 @@ object HM:
       }
     }
 
-  private def inferArgs(env: Env, args: List[Element], initial: Subst = Subst.empty): Either[TypeError, (Subst, List[T])] =
+  private def inferArgs(env: Env, args: List[Element], initial: Subst = Subst.empty)(using Recorder): Either[TypeError, (Subst, List[T])] =
     val init: Either[TypeError, (Subst, List[T])] = Right((initial, Nil))
     args.foldLeft(init) { (accE, ex) =>
       for
         (sAcc, ts) <- accE
-        Result(sX, tX) <- inferExpr(sAcc.applyTo(env), ex)
+        Result(sX, tX) <- inferExprInternal(sAcc.applyTo(env), ex)
       yield (sX.compose(sAcc), ts :+ tX)
     }
 
-  private def inferMethodCall(env: Env, e: Element): InferResult =
+  private def inferMethodCall(env: Env, e: Element)(using Recorder): InferResult =
     val name = e.name.getOrElse("?")
     val recvE = e.children.headOption.getOrElse(Element("unit"))
     val argsE = e.children.tail
     for
-      Result(sRecv, tRecv) <- inferExpr(env, recvE)
+      Result(sRecv, tRecv) <- inferExprInternal(env, recvE)
       out <- inferMethodWithArgs(env, name, argsE, sRecv, tRecv)
     yield out
 
-  private def inferMethodWithArgs(env: Env, name: String, argsE: List[Element], subst: Subst, recvType: T): InferResult =
+  private def inferMethodWithArgs(env: Env, name: String, argsE: List[Element], subst: Subst, recvType: T)(using Recorder): InferResult =
     inferArgs(env, argsE, subst).flatMap { case (sArgs, argTypes) =>
       name match
         case "push" | "append" => inferListAppendLike(sArgs, recvType, argTypes)
@@ -516,12 +551,12 @@ object HM:
       case Nil => None
 
   // Infer returns in a block for lambda typing
-  private def inferBlockReturn(env0: Env, blk: Element, retVar: T): Either[TypeError, (Subst, Boolean)] =
+  private def inferBlockReturn(env0: Env, blk: Element, retVar: T)(using Recorder): Either[TypeError, (Subst, Boolean)] =
     var env = env0
     var subst: Subst = Subst.empty
     var found = false
 
-    def goExpr(e: Element): Either[TypeError, Result] = inferExpr(env, e)
+    def goExpr(e: Element): Either[TypeError, Result] = inferExprInternal(env, e)
     def goBlock(b: Element): Either[TypeError, (Subst, Boolean)] = inferBlockReturn(env, b, retVar)
 
     def goStmt(st: Element): Either[TypeError, (Subst, Boolean)] = st.kind match
