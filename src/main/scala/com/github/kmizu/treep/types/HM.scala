@@ -7,6 +7,7 @@ import java.util.concurrent.atomic.AtomicInteger
 
 object HM:
   final case class Result(subst: Subst, ty: T)
+  private type InferResult = Either[TypeError, Result]
 
   private val nextId = new AtomicInteger(1000)
   private def fresh(): T = T.TVar(nextId.incrementAndGet())
@@ -99,285 +100,373 @@ object HM:
     )
     Env(ops)
 
-  def inferExpr(env: Env, e: Element): Either[TypeError, Result] = e.kind match
+  def inferExpr(env: Env, e: Element): InferResult = e.kind match
     case "int"    => Right(Result(Subst.empty, T.TInt))
     case "bool"   => Right(Result(Subst.empty, T.TBool))
     case "string" => Right(Result(Subst.empty, T.TString))
-    case "var"    => e.name.flatMap(env.lookup).map(inst).toRight(TypeError.Mismatch(T.TVar(-1), T.TVar(-2))).map(t => Result(Subst.empty, t))
-    case "dict"   =>
-      // unify keys and values across pairs; accept both children-based and attr-based key forms
-      def kvOf(pair: Element): Option[(Element, Element)] =
-        if pair.children.length >= 2 then Some((pair.children.head, pair.children(1)))
-        else
-          pair.getAttr("key").map { keyValue =>
-            val k = Element("string", attrs = List(Attr("value", keyValue)))
-            val v = pair.children.headOption.getOrElse(Element("unit"))
-            (k, v)
-          }
-      val init: Either[TypeError, (Subst, Option[T], Option[T])] = Right(Subst.empty, None, None)
-      val res = e.children.foldLeft(init) { case (accE, pair) =>
-        kvOf(pair) match
-          case None => accE
-          case Some((kexpr, vexpr)) =>
-            for
-              (sAcc, kOpt, vOpt) <- accE
-              Result(sK, tK) <- inferExpr(sAcc.applyTo(env), kexpr)
-              Result(sV, tV) <- inferExpr(sK.applyTo(env), vexpr)
-              sK2 <- kOpt.map(kk => Infer.unify(sV.apply(kk), sV.apply(tK))).getOrElse(Right(sV))
-              sV2 <- vOpt.map(vv => Infer.unify(sK2.apply(vv), sK2.apply(tV))).getOrElse(Right(sK2))
-            yield (sV2, Some(sV2.apply(tK)), Some(sV2.apply(tV)))
-      }
-      res.map { case (s, kOpt, vOpt) => Result(s, T.TDict(kOpt.getOrElse(fresh()), vOpt.getOrElse(fresh()))) }
-    case "index"  =>
-      val tE = e.getChild("target").getOrElse(Element("unit"))
-      val kE = e.getChild("key").getOrElse(Element("unit"))
-      for
-        Result(s1, tT) <- inferExpr(env, tE)
-        Result(s2, tK) <- inferExpr(s1.applyTo(env), kE)
-        tv = fresh()
-        // try dict: Dict[String, tv] and key String
-        tryDict = Infer.unify(s2.apply(tT), T.TDict(T.TString, tv)).flatMap { sD => Infer.unify(sD.apply(tK), T.TString).map(sK => sK.compose(sD)) }
-        res <- tryDict.orElse {
-          // try list: List[tv] and key Int
-          for sL <- Infer.unify(s2.apply(tT), T.TList(tv)); sK <- Infer.unify(sL.apply(tK), T.TInt) yield sK.compose(sL)
-        }
-      yield Result(res.compose(s2).compose(s1), res.apply(tv))
-    case "field" =>
-      val tgt = e.children.headOption.getOrElse(Element("unit"))
-      val key = e.getAttrOrElse("name", "")
-      for
-        Result(s1, tT) <- inferExpr(env, tgt)
-        tv = fresh()
-        // Try record-like first: { key: tv | ρ }
-        tryRec = Infer.unify(s1.apply(tT), T.TRecord(Map(key -> tv), Some(freshRowId()))).map(s => Result(s.compose(s1), s.apply(tv)))
-        out <- tryRec.orElse {
-          // Fallback: Dict[String, tv]
-          Infer.unify(s1.apply(tT), T.TDict(T.TString, tv)).map { s => Result(s.compose(s1), s.apply(tv)) }
-        }
-      yield out
-    case "lambda" =>
-      val body = e.children.headOption.getOrElse(Element("block"))
-      val paramsAttr = e.getAttr("params")
-      paramsAttr match
-        case Some(sv) =>
-          val namesAndTypes: List[(String, T)] = ParamParser.parseParams(sv).flatMap { case (n, tStr) =>
-            parseTypeStr(tStr).map(tt => n -> tt)
-          }
-          val retVar = fresh()
-          var env1 = env
-          namesAndTypes.foreach { case (n,t) => env1 = env1.extend(n, Scheme(Set.empty, t)) }
-          inferBlockReturn(env1, body, retVar) match
-            case Left(err) => Left(err)
-            case Right((s, found)) =>
-              val s2 = if !found then Infer.unify(s.apply(retVar), s.apply(T.TUnit)).getOrElse(s) else s
-              Right(Result(s2, T.TFun(namesAndTypes.map(nt => s2.apply(nt._2)), s2.apply(retVar))))
-        case None =>
-          // backward-compat single param form
-          val pName = e.getAttrOrElse("param", "_")
-          val pTypeStr = e.getAttr("ptype")
-          val pType = pTypeStr.flatMap(parseTypeStr).getOrElse(fresh())
-          val retVar = fresh()
-          val env1 = env.extend(pName, Scheme(Set.empty, pType))
-          inferBlockReturn(env1, body, retVar) match
-            case Left(err) => Left(err)
-            case Right((s, found)) =>
-              val s2 = if !found then Infer.unify(s.apply(retVar), s.apply(T.TUnit)).getOrElse(s) else s
-              Right(Result(s2, T.TFun(List(s2.apply(pType)), s2.apply(retVar))))
-    case "list"   =>
-      val init: Either[TypeError, (Subst, Option[T])] = Right(Subst.empty, None)
-      val res = e.children.foldLeft(init) { case (accE, ch) =>
-        for
-          (sAcc, tOpt) <- accE
-          Result(sE, tE) <- inferExpr(sAcc.applyTo(env), ch)
-          sU <- tOpt.map(t0 => Infer.unify(sE.apply(t0), sE.apply(tE))).getOrElse(Right(sE))
-        yield (sU, Some(sU.apply(tE)))
-      }
-      res.map { case (s, tOpt) => Result(s, T.TList(tOpt.getOrElse(fresh()))) }
-    case "call" =>
-      val name = e.name.getOrElse("?")
-      // Specialize certain builtins (e.g., iter) to report errors on unsupported types
-      if name == "iter" then
-        e.children.headOption match
-          case None => Left(TypeError.Mismatch(T.TVar(-1), T.TUnit))
-          case Some(argE) =>
-            for
-              Result(s1, tArg) <- inferExpr(env, argE)
-              a = fresh(); k = fresh(); v = fresh()
-              tryList = Infer.unify(s1.apply(tArg), T.TList(a)).map(s => Result(s, T.TIter(s.apply(a))))
-              tryDict = Infer.unify(s1.apply(tArg), T.TDict(k, v)).map(s => Result(s, T.TIter(T.TTuple2(s.apply(k), s.apply(v)))))
-              out <- tryList.orElse(tryDict).left.map(_ => TypeError.Mismatch(T.TList(fresh()), tArg))
-            yield out
-      else
-        val args = e.children
-        val init: Either[TypeError, (Subst, List[T])] = Right((Subst.empty, Nil))
-        val inferredArgs = args.foldLeft(init) { (accE, ex) =>
-          for
-            (sAcc, ts) <- accE
-            Result(sX, tX) <- inferExpr(sAcc.applyTo(env), ex)
-          yield (sX.compose(sAcc), ts :+ tX)
-        }
-        inferredArgs.flatMap { case (sArgs, tArgs) =>
-          env.lookup(name).map(inst).toRight(TypeError.Mismatch(T.TVar(-1), T.TVar(-2))).flatMap { fT =>
-            val beta = fresh()
-            Infer.unify(sArgs.apply(fT), T.TFun(tArgs.map(sArgs.apply), beta)).map { sFn =>
-              Result(sFn.compose(sArgs), sFn.apply(beta))
-            }
-          }
-        }
-    case "mcall" =>
-      val name = e.name.getOrElse("?")
-      val recvE = e.children.headOption.getOrElse(Element("unit"))
-      val argsE = e.children.tail
-      for
-        Result(sR, tR) <- inferExpr(env, recvE)
-        // infer args under substituted env
-        resArgs <- argsE.foldLeft(Right((sR, List.empty[T])): Either[TypeError, (Subst, List[T])]) {
-          case (accE, ex) =>
-            for
-              (sAcc, ts) <- accE
-              Result(sX, tX) <- inferExpr(sAcc.applyTo(env), ex)
-            yield (sX.compose(sAcc), ts :+ tX)
-        }
-        (sA, tArgs) = resArgs
-        out <- name match
-          case "push" =>
-            val a = fresh()
-            for sL <- Infer.unify(sA.apply(tR), T.TList(a)); sV <- if tArgs.nonEmpty then Infer.unify(sL.apply(tArgs.head), sL.apply(a)) else Right(sL)
-            yield Result(sV, T.TList(sV.apply(a)))
-          case "append" =>
-            val a = fresh()
-            for sL <- Infer.unify(sA.apply(tR), T.TList(a)); sV <- if tArgs.nonEmpty then Infer.unify(sL.apply(tArgs.head), sL.apply(a)) else Right(sL)
-            yield Result(sV, T.TList(sV.apply(a)))
-          case "concat" =>
-            val a = fresh()
-            val listT = T.TList(a)
-            for
-              sL <- Infer.unify(sA.apply(tR), listT)
-              sArg <- if tArgs.nonEmpty then Infer.unify(sL.apply(tArgs.head), sL.apply(listT)) else Right(sL)
-            yield Result(sArg, T.TList(sArg.apply(a)))
-          case "length" =>
-            val a = fresh()
-            val tryList = Infer.unify(sA.apply(tR), T.TList(a)).map(s => Result(s, T.TInt))
-            val tryString = Infer.unify(sA.apply(tR), T.TString).map(s => Result(s, T.TInt))
-            tryList.orElse(tryString)
-          case "head" =>
-            val a = fresh()
-            for sL <- Infer.unify(sA.apply(tR), T.TList(a)) yield Result(sL, sL.apply(a))
-          case "tail" =>
-            val a = fresh()
-            for sL <- Infer.unify(sA.apply(tR), T.TList(a)) yield Result(sL, T.TList(sL.apply(a)))
-          case "iter" =>
-            val a = fresh(); val k = fresh(); val v = fresh()
-            // List[a] -> Iter[a], Dict[k,v] -> Iter[(k,v)]
-            val tryList = Infer.unify(sA.apply(tR), T.TList(a)).map(s => Result(s, T.TIter(s.apply(a))))
-            val tryDict = Infer.unify(sA.apply(tR), T.TDict(k, v)).map(s => Result(s, T.TIter(T.TTuple2(s.apply(k), s.apply(v)))))
-            tryList.orElse(tryDict)
-          case "size" =>
-            val k = fresh(); val v = fresh()
-            for sD <- Infer.unify(sA.apply(tR), T.TDict(k, v)) yield Result(sD, T.TInt)
-          case "hasKey" =>
-            val k = fresh(); val v = fresh()
-            for sD <- Infer.unify(sA.apply(tR), T.TDict(k, v)); sK <- if tArgs.nonEmpty then Infer.unify(sD.apply(tArgs.head), sD.apply(k)) else Right(sD)
-            yield Result(sK, T.TBool)
-          case "keys" =>
-            val k = fresh(); val v = fresh()
-            for sD <- Infer.unify(sA.apply(tR), T.TDict(k, v)) yield Result(sD, T.TList(sD.apply(k)))
-          case "values" =>
-            val k = fresh(); val v = fresh()
-            for sD <- Infer.unify(sA.apply(tR), T.TDict(k, v)) yield Result(sD, T.TList(sD.apply(v)))
-          case "entries" =>
-            val k = fresh(); val v = fresh()
-            for sD <- Infer.unify(sA.apply(tR), T.TDict(k, v)) yield Result(sD, T.TList(T.TTuple2(sD.apply(k), sD.apply(v))))
-          case "get" =>
-            val k = fresh(); val v = fresh()
-            for sD <- Infer.unify(sA.apply(tR), T.TDict(k, v)); sK <- if tArgs.nonEmpty then Infer.unify(sD.apply(tArgs.head), sD.apply(k)) else Right(sD)
-            yield Result(sK, sK.apply(v))
-          case "getOrElse" =>
-            val k = fresh(); val v = fresh()
-            for
-              sD <- Infer.unify(sA.apply(tR), T.TDict(k, v))
-              sK <- if tArgs.nonEmpty then Infer.unify(sD.apply(tArgs.head), sD.apply(k)) else Right(sD)
-              sDef <- if tArgs.lengthCompare(1) > 0 then Infer.unify(sK.apply(tArgs(1)), sK.apply(v)) else Right(sK)
-            yield Result(sDef, sDef.apply(v))
-          case "put" =>
-            val k = fresh(); val v = fresh()
-            for
-              sD <- Infer.unify(sA.apply(tR), T.TDict(k, v))
-              sK <- if tArgs.nonEmpty then Infer.unify(sD.apply(tArgs.head), sD.apply(k)) else Right(sD)
-              sV <- if tArgs.lengthCompare(1) > 0 then Infer.unify(sK.apply(tArgs(1)), sK.apply(v)) else Right(sK)
-            yield Result(sV, T.TDict(sV.apply(k), sV.apply(v)))
-          case "remove" =>
-            val k = fresh(); val v = fresh()
-            for
-              sD <- Infer.unify(sA.apply(tR), T.TDict(k, v))
-              sK <- if tArgs.nonEmpty then Infer.unify(sD.apply(tArgs.head), sD.apply(k)) else Right(sD)
-            yield Result(sK, T.TDict(sK.apply(k), sK.apply(v)))
-          case "hasNext" =>
-            val a = fresh(); for sI <- Infer.unify(sA.apply(tR), T.TIter(a)) yield Result(sI, T.TBool)
-          case "next" =>
-            val a = fresh(); for sI <- Infer.unify(sA.apply(tR), T.TIter(a)) yield Result(sI, sI.apply(a))
-          case "toList" =>
-            val a = fresh(); for sI <- Infer.unify(sA.apply(tR), T.TIter(a)) yield Result(sI, T.TList(sI.apply(a)))
-          case "split" =>
-            for sS <- Infer.unify(sA.apply(tR), T.TString); sD <- if tArgs.nonEmpty then Infer.unify(sS.apply(tArgs.head), T.TString) else Right(sS)
-            yield Result(sD, T.TList(T.TString))
-          case "substring" =>
-            for
-              sS <- Infer.unify(sA.apply(tR), T.TString)
-              s1 <- if tArgs.nonEmpty then Infer.unify(sS.apply(tArgs.head), T.TInt) else Right(sS)
-              s2 <- if tArgs.lengthCompare(1) > 0 then Infer.unify(s1.apply(tArgs(1)), T.TInt) else Right(s1)
-            yield Result(s2, T.TString)
-          case "contains" =>
-            for sS <- Infer.unify(sA.apply(tR), T.TString); sD <- if tArgs.nonEmpty then Infer.unify(sS.apply(tArgs.head), T.TString) else Right(sS)
-            yield Result(sD, T.TBool)
-          case "join" =>
-            val a = fresh()
-            for sL <- Infer.unify(sA.apply(tR), T.TList(a)); sD <- if tArgs.nonEmpty then Infer.unify(sL.apply(tArgs.head), T.TString) else Right(sL)
-            yield Result(sD, T.TString)
-          case _ =>
-            // Try extensions first
-            val tryExtension: Option[Either[TypeError, Result]] = env.extensions.find(_.methodName == name).map { ext =>
-              // Instantiate the extension's polymorphic scheme
-              val extFuncType = inst(ext.paramScheme)
-              // The function type is (receiverType, params...) -> returnType
-              extFuncType match
-                case T.TFun(recvType :: paramTypes, retType) =>
-                  // Unify receiver type
-                  for
-                    sRecv <- Infer.unify(sA.apply(tR), sA.apply(recvType))
-                    // Unify argument types
-                    sArgs <- if paramTypes.length == tArgs.length then
-                      val init: Either[TypeError, Subst] = Right(sRecv)
-                      paramTypes.zip(tArgs).foldLeft(init) { case (accE, (pType, aType)) =>
-                        for
-                          acc <- accE
-                          s <- Infer.unify(acc.apply(pType), acc.apply(aType))
-                        yield s.compose(acc)
-                      }
-                    else
-                      Left(TypeError.Mismatch(T.TVar(-1), T.TVar(-2)))
-                  yield Result(sArgs.compose(sRecv).compose(sA), sArgs.apply(retType))
-                case _ => Left(TypeError.Mismatch(T.TVar(-1), T.TVar(-2)))
-            }
+    case "var"    => inferVariable(env, e)
+    case "dict"   => inferDict(env, e)
+    case "index"  => inferIndexAccess(env, e)
+    case "field"  => inferFieldAccess(env, e)
+    case "lambda" => inferLambda(env, e)
+    case "list"   => inferList(env, e)
+    case "call"   => inferCall(env, e)
+    case "mcall"  => inferMethodCall(env, e)
+    case _        => Right(Result(Subst.empty, fresh()))
 
-            tryExtension.getOrElse {
-              // Try record-style method: recv has field `name` of type (args) -> beta
-              val beta = fresh()
-              val tryRecord = Infer.unify(sA.apply(tR), T.TRecord(Map(name -> T.TFun(tArgs, beta)), Some(freshRowId()))).map { sRec =>
-                Result(sRec.compose(sA), sRec.apply(beta))
-              }
-              tryRecord.orElse {
-                val init: Either[TypeError, (Subst, List[T])] = Right((sA, tR :: tArgs))
+  private def inferVariable(env: Env, e: Element): InferResult =
+    e.name
+      .flatMap(env.lookup)
+      .map(inst)
+      .toRight(TypeError.Mismatch(T.TVar(-1), T.TVar(-2)))
+      .map(t => Result(Subst.empty, t))
+
+  private def inferDict(env: Env, e: Element): InferResult =
+    def kvOf(pair: Element): Option[(Element, Element)] =
+      if pair.children.length >= 2 then Some((pair.children.head, pair.children(1)))
+      else
+        pair.getAttr("key").map { keyValue =>
+          val k = Element("string", attrs = List(Attr("value", keyValue)))
+          val v = pair.children.headOption.getOrElse(Element("unit"))
+          (k, v)
+        }
+
+    val init: Either[TypeError, (Subst, Option[T], Option[T])] = Right(Subst.empty, None, None)
+    val res = e.children.foldLeft(init) { case (accE, pair) =>
+      kvOf(pair) match
+        case None => accE
+        case Some((kexpr, vexpr)) =>
+          for
+            (sAcc, kOpt, vOpt) <- accE
+            Result(sK, tK) <- inferExpr(sAcc.applyTo(env), kexpr)
+            Result(sV, tV) <- inferExpr(sK.applyTo(env), vexpr)
+            sK2 <- kOpt.map(kk => Infer.unify(sV.apply(kk), sV.apply(tK))).getOrElse(Right(sV))
+            sV2 <- vOpt.map(vv => Infer.unify(sK2.apply(vv), sK2.apply(tV))).getOrElse(Right(sK2))
+          yield (sV2, Some(sV2.apply(tK)), Some(sV2.apply(tV)))
+    }
+
+    res.map { case (s, kOpt, vOpt) => Result(s, T.TDict(kOpt.getOrElse(fresh()), vOpt.getOrElse(fresh()))) }
+
+  private def inferIndexAccess(env: Env, e: Element): InferResult =
+    val tE = e.getChild("target").getOrElse(Element("unit"))
+    val kE = e.getChild("key").getOrElse(Element("unit"))
+    for
+      Result(s1, tT) <- inferExpr(env, tE)
+      Result(s2, tK) <- inferExpr(s1.applyTo(env), kE)
+      tv = fresh()
+      tryDict = Infer.unify(s2.apply(tT), T.TDict(T.TString, tv)).flatMap { sD => Infer.unify(sD.apply(tK), T.TString).map(sK => sK.compose(sD)) }
+      res <- tryDict.orElse {
+        for sL <- Infer.unify(s2.apply(tT), T.TList(tv)); sK <- Infer.unify(sL.apply(tK), T.TInt) yield sK.compose(sL)
+      }
+    yield Result(res.compose(s2).compose(s1), res.apply(tv))
+
+  private def inferFieldAccess(env: Env, e: Element): InferResult =
+    val tgt = e.children.headOption.getOrElse(Element("unit"))
+    val key = e.getAttrOrElse("name", "")
+    for
+      Result(s1, tT) <- inferExpr(env, tgt)
+      tv = fresh()
+      tryRec = Infer.unify(s1.apply(tT), T.TRecord(Map(key -> tv), Some(freshRowId()))).map(s => Result(s.compose(s1), s.apply(tv)))
+      out <- tryRec.orElse {
+        Infer.unify(s1.apply(tT), T.TDict(T.TString, tv)).map { s => Result(s.compose(s1), s.apply(tv)) }
+      }
+    yield out
+
+  private def inferLambda(env: Env, e: Element): InferResult =
+    val body = e.children.headOption.getOrElse(Element("block"))
+    e.getAttr("params") match
+      case Some(sv) => inferTypedLambda(env, body, sv)
+      case None     => inferSingleParamLambda(env, body, e)
+
+  private def inferTypedLambda(env: Env, body: Element, params: String): InferResult =
+    val namesAndTypes: List[(String, T)] = ParamParser.parseParams(params).flatMap { case (n, tStr) =>
+      parseTypeStr(tStr).map(tt => n -> tt)
+    }
+    val retVar = fresh()
+    val envWithParams = namesAndTypes.foldLeft(env) { case (accEnv, (n, t)) =>
+      accEnv.extend(n, Scheme(Set.empty, t))
+    }
+    inferBlockReturn(envWithParams, body, retVar) match
+      case Left(err) => Left(err)
+      case Right((s, found)) =>
+        val s2 = if !found then Infer.unify(s.apply(retVar), s.apply(T.TUnit)).getOrElse(s) else s
+        Right(Result(s2, T.TFun(namesAndTypes.map(nt => s2.apply(nt._2)), s2.apply(retVar))))
+
+  private def inferSingleParamLambda(env: Env, body: Element, e: Element): InferResult =
+    val pName = e.getAttrOrElse("param", "_")
+    val pTypeStr = e.getAttr("ptype")
+    val pType = pTypeStr.flatMap(parseTypeStr).getOrElse(fresh())
+    val retVar = fresh()
+    val env1 = env.extend(pName, Scheme(Set.empty, pType))
+    inferBlockReturn(env1, body, retVar) match
+      case Left(err) => Left(err)
+      case Right((s, found)) =>
+        val s2 = if !found then Infer.unify(s.apply(retVar), s.apply(T.TUnit)).getOrElse(s) else s
+        Right(Result(s2, T.TFun(List(s2.apply(pType)), s2.apply(retVar))))
+
+  private def inferList(env: Env, e: Element): InferResult =
+    val init: Either[TypeError, (Subst, Option[T])] = Right(Subst.empty, None)
+    val res = e.children.foldLeft(init) { case (accE, ch) =>
+      for
+        (sAcc, tOpt) <- accE
+        Result(sE, tE) <- inferExpr(sAcc.applyTo(env), ch)
+        sU <- tOpt.map(t0 => Infer.unify(sE.apply(t0), sE.apply(tE))).getOrElse(Right(sE))
+      yield (sU, Some(sU.apply(tE)))
+    }
+    res.map { case (s, tOpt) => Result(s, T.TList(tOpt.getOrElse(fresh()))) }
+
+  private def inferCall(env: Env, e: Element): InferResult =
+    val name = e.name.getOrElse("?")
+    if name == "iter" then
+      inferIteratorCall(env, e.children.headOption)
+    else
+      inferRegularCall(env, name, e.children)
+
+  private def inferIteratorCall(env: Env, argOpt: Option[Element]): InferResult =
+    argOpt match
+      case None => Left(TypeError.Mismatch(T.TVar(-1), T.TUnit))
+      case Some(argE) =>
+        for
+          Result(s1, tArg) <- inferExpr(env, argE)
+          a = fresh(); k = fresh(); v = fresh()
+          tryList = Infer.unify(s1.apply(tArg), T.TList(a)).map(s => Result(s, T.TIter(s.apply(a))))
+          tryDict = Infer.unify(s1.apply(tArg), T.TDict(k, v)).map(s => Result(s, T.TIter(T.TTuple2(s.apply(k), s.apply(v)))))
+          out <- tryList.orElse(tryDict).left.map(_ => TypeError.Mismatch(T.TList(fresh()), tArg))
+        yield out
+
+  private def inferRegularCall(env: Env, name: String, args: List[Element]): InferResult =
+    inferArgs(env, args).flatMap { case (sArgs, tArgs) =>
+      env.lookup(name).map(inst).toRight(TypeError.Mismatch(T.TVar(-1), T.TVar(-2))).flatMap { fT =>
+        val beta = fresh()
+        Infer.unify(sArgs.apply(fT), T.TFun(tArgs.map(sArgs.apply), beta)).map { sFn =>
+          Result(sFn.compose(sArgs), sFn.apply(beta))
+        }
+      }
+    }
+
+  private def inferArgs(env: Env, args: List[Element], initial: Subst = Subst.empty): Either[TypeError, (Subst, List[T])] =
+    val init: Either[TypeError, (Subst, List[T])] = Right((initial, Nil))
+    args.foldLeft(init) { (accE, ex) =>
+      for
+        (sAcc, ts) <- accE
+        Result(sX, tX) <- inferExpr(sAcc.applyTo(env), ex)
+      yield (sX.compose(sAcc), ts :+ tX)
+    }
+
+  private def inferMethodCall(env: Env, e: Element): InferResult =
+    val name = e.name.getOrElse("?")
+    val recvE = e.children.headOption.getOrElse(Element("unit"))
+    val argsE = e.children.tail
+    for
+      Result(sRecv, tRecv) <- inferExpr(env, recvE)
+      out <- inferMethodWithArgs(env, name, argsE, sRecv, tRecv)
+    yield out
+
+  private def inferMethodWithArgs(env: Env, name: String, argsE: List[Element], subst: Subst, recvType: T): InferResult =
+    inferArgs(env, argsE, subst).flatMap { case (sArgs, argTypes) =>
+      name match
+        case "push" | "append" => inferListAppendLike(sArgs, recvType, argTypes)
+        case "concat"          => inferListConcat(sArgs, recvType, argTypes)
+        case "length"          => inferLength(sArgs, recvType)
+        case "head"            => inferListHead(sArgs, recvType)
+        case "tail"            => inferListTail(sArgs, recvType)
+        case "iter"            => inferIterableIterator(sArgs, recvType)
+        case "size"            => inferDictSize(sArgs, recvType)
+        case "hasKey"          => inferDictHasKey(sArgs, recvType, argTypes)
+        case "keys"            => inferDictKeys(sArgs, recvType)
+        case "values"          => inferDictValues(sArgs, recvType)
+        case "entries"         => inferDictEntries(sArgs, recvType)
+        case "get"             => inferDictGet(sArgs, recvType, argTypes)
+        case "getOrElse"       => inferDictGetOrElse(sArgs, recvType, argTypes)
+        case "put"             => inferDictPut(sArgs, recvType, argTypes)
+        case "remove"          => inferDictRemove(sArgs, recvType, argTypes)
+        case "hasNext"         => inferIteratorHasNext(sArgs, recvType)
+        case "next"            => inferIteratorNext(sArgs, recvType)
+        case "toList"          => inferIteratorToList(sArgs, recvType)
+        case "split"           => inferStringSplit(sArgs, recvType, argTypes)
+        case "substring"       => inferStringSubstring(sArgs, recvType, argTypes)
+        case "contains"        => inferStringContains(sArgs, recvType, argTypes)
+        case "join"            => inferListJoin(sArgs, recvType, argTypes)
+        case _                 => inferMethodFallback(env, name, sArgs, recvType, argTypes)
+    }
+
+  private def withList(subst: Subst, recv: T)(f: (Subst, T) => InferResult): InferResult =
+    val a = fresh()
+    Infer.unify(subst.apply(recv), T.TList(a)).flatMap { sList =>
+      f(sList, sList.apply(a))
+    }
+
+  private def withDict(subst: Subst, recv: T)(f: (Subst, T, T) => InferResult): InferResult =
+    val k = fresh()
+    val v = fresh()
+    Infer.unify(subst.apply(recv), T.TDict(k, v)).flatMap { sDict =>
+      f(sDict, sDict.apply(k), sDict.apply(v))
+    }
+
+  private def withString(subst: Subst, recv: T)(f: Subst => InferResult): InferResult =
+    Infer.unify(subst.apply(recv), T.TString).flatMap(f)
+
+  private def inferListAppendLike(subst: Subst, recv: T, args: List[T]): InferResult =
+    withList(subst, recv) { (sList, elemType) =>
+      unifyOptionalArg(sList, args, 0, elemType).map { sVal =>
+        Result(sVal, T.TList(sVal.apply(elemType)))
+      }
+    }
+
+  private def inferListConcat(subst: Subst, recv: T, args: List[T]): InferResult =
+    withList(subst, recv) { (sList, elemType) =>
+      val listType = T.TList(elemType)
+      unifyOptionalArg(sList, args, 0, listType).map { sArg =>
+        Result(sArg, T.TList(sArg.apply(elemType)))
+      }
+    }
+
+  private def inferLength(subst: Subst, recv: T): InferResult =
+    val tryList = withList(subst, recv) { (sList, _) => Right(Result(sList, T.TInt)) }
+    tryList.orElse(withString(subst, recv)(s => Right(Result(s, T.TInt))))
+
+  private def inferListHead(subst: Subst, recv: T): InferResult =
+    withList(subst, recv) { (sList, elemType) => Right(Result(sList, elemType)) }
+
+  private def inferListTail(subst: Subst, recv: T): InferResult =
+    withList(subst, recv) { (sList, elemType) => Right(Result(sList, T.TList(elemType))) }
+
+  private def inferIterableIterator(subst: Subst, recv: T): InferResult =
+    val listResult = withList(subst, recv) { (sList, elemType) => Right(Result(sList, T.TIter(elemType))) }
+    val dictResult = withDict(subst, recv) { (sDict, keyType, valueType) =>
+      Right(Result(sDict, T.TIter(T.TTuple2(keyType, valueType))))
+    }
+    listResult.orElse(dictResult)
+
+  private def inferDictSize(subst: Subst, recv: T): InferResult =
+    withDict(subst, recv) { (sDict, _, _) => Right(Result(sDict, T.TInt)) }
+
+  private def inferDictHasKey(subst: Subst, recv: T, args: List[T]): InferResult =
+    withDict(subst, recv) { (sDict, keyType, _) =>
+      unifyOptionalArg(sDict, args, 0, keyType).map(sKey => Result(sKey, T.TBool))
+    }
+
+  private def inferDictKeys(subst: Subst, recv: T): InferResult =
+    withDict(subst, recv) { (sDict, keyType, _) => Right(Result(sDict, T.TList(keyType))) }
+
+  private def inferDictValues(subst: Subst, recv: T): InferResult =
+    withDict(subst, recv) { (sDict, _, valueType) => Right(Result(sDict, T.TList(valueType))) }
+
+  private def inferDictEntries(subst: Subst, recv: T): InferResult =
+    withDict(subst, recv) { (sDict, keyType, valueType) =>
+      Right(Result(sDict, T.TList(T.TTuple2(keyType, valueType))))
+    }
+
+  private def inferDictGet(subst: Subst, recv: T, args: List[T]): InferResult =
+    withDict(subst, recv) { (sDict, keyType, valueType) =>
+      unifyOptionalArg(sDict, args, 0, keyType).map { sKey =>
+        Result(sKey, sKey.apply(valueType))
+      }
+    }
+
+  private def inferDictGetOrElse(subst: Subst, recv: T, args: List[T]): InferResult =
+    withDict(subst, recv) { (sDict, keyType, valueType) =>
+      for
+        sKey <- unifyOptionalArg(sDict, args, 0, keyType)
+        sDef <- unifyOptionalArg(sKey, args, 1, valueType)
+      yield Result(sDef, sDef.apply(valueType))
+    }
+
+  private def inferDictPut(subst: Subst, recv: T, args: List[T]): InferResult =
+    withDict(subst, recv) { (sDict, keyType, valueType) =>
+      for
+        sKey <- unifyOptionalArg(sDict, args, 0, keyType)
+        sVal <- unifyOptionalArg(sKey, args, 1, valueType)
+      yield Result(sVal, T.TDict(sVal.apply(keyType), sVal.apply(valueType)))
+    }
+
+  private def inferDictRemove(subst: Subst, recv: T, args: List[T]): InferResult =
+    withDict(subst, recv) { (sDict, keyType, valueType) =>
+      unifyOptionalArg(sDict, args, 0, keyType).map { sKey =>
+        Result(sKey, T.TDict(sKey.apply(keyType), sKey.apply(valueType)))
+      }
+    }
+
+  private def inferIteratorHasNext(subst: Subst, recv: T): InferResult =
+    val a = fresh()
+    for sIter <- Infer.unify(subst.apply(recv), T.TIter(a)) yield Result(sIter, T.TBool)
+
+  private def inferIteratorNext(subst: Subst, recv: T): InferResult =
+    val a = fresh()
+    for sIter <- Infer.unify(subst.apply(recv), T.TIter(a)) yield Result(sIter, sIter.apply(a))
+
+  private def inferIteratorToList(subst: Subst, recv: T): InferResult =
+    val a = fresh()
+    for sIter <- Infer.unify(subst.apply(recv), T.TIter(a)) yield Result(sIter, T.TList(sIter.apply(a)))
+
+  private def inferStringSplit(subst: Subst, recv: T, args: List[T]): InferResult =
+    withString(subst, recv) { sString =>
+      unifyOptionalArg(sString, args, 0, T.TString).map { sDelim =>
+        Result(sDelim, T.TList(T.TString))
+      }
+    }
+
+  private def inferStringSubstring(subst: Subst, recv: T, args: List[T]): InferResult =
+    withString(subst, recv) { sString =>
+      for
+        sStart <- unifyOptionalArg(sString, args, 0, T.TInt)
+        sEnd <- unifyOptionalArg(sStart, args, 1, T.TInt)
+      yield Result(sEnd, T.TString)
+    }
+
+  private def inferStringContains(subst: Subst, recv: T, args: List[T]): InferResult =
+    withString(subst, recv) { sString =>
+      unifyOptionalArg(sString, args, 0, T.TString).map { sNeedle =>
+        Result(sNeedle, T.TBool)
+      }
+    }
+
+  private def inferListJoin(subst: Subst, recv: T, args: List[T]): InferResult =
+    withList(subst, recv) { (sList, _) =>
+      unifyOptionalArg(sList, args, 0, T.TString).map { sDelim =>
+        Result(sDelim, T.TString)
+      }
+    }
+
+  private def inferMethodFallback(env: Env, name: String, subst: Subst, recvType: T, argTypes: List[T]): InferResult =
+    val tryExtension: Option[InferResult] = env.extensions.find(_.methodName == name).map { ext =>
+      val extFuncType = inst(ext.paramScheme)
+      extFuncType match
+        case T.TFun(recvT :: paramTypes, retType) =>
+          for
+            sRecv <- Infer.unify(subst.apply(recvType), subst.apply(recvT))
+            sArgs <- if paramTypes.length == argTypes.length then
+              val init: Either[TypeError, Subst] = Right(sRecv)
+              paramTypes.zip(argTypes).foldLeft(init) { case (accE, (pType, aType)) =>
                 for
-                  (sAll, allArgs) <- init
-                  fT <- env.lookup(name).map(inst).toRight(TypeError.Mismatch(T.TVar(-1), T.TVar(-2)))
-                  beta = fresh()
-                  sFn <- Infer.unify(sAll.apply(fT), T.TFun(allArgs.map(sAll.apply), beta))
-              yield Result(sFn.compose(sAll), sFn.apply(beta))
+                  acc <- accE
+                  s <- Infer.unify(acc.apply(pType), acc.apply(aType))
+                yield s.compose(acc)
               }
-            }
-      yield out
-    case other => Right(Result(Subst.empty, fresh()))
+            else
+              Left(TypeError.Mismatch(T.TVar(-1), T.TVar(-2)))
+          yield Result(sArgs.compose(sRecv).compose(subst), sArgs.apply(retType))
+        case _ => Left(TypeError.Mismatch(T.TVar(-1), T.TVar(-2)))
+    }
+
+    tryExtension.getOrElse {
+      val beta = fresh()
+      val tryRecord = Infer.unify(subst.apply(recvType), T.TRecord(Map(name -> T.TFun(argTypes, beta)), Some(freshRowId()))).map { sRec =>
+        Result(sRec.compose(subst), sRec.apply(beta))
+      }
+      tryRecord.orElse {
+        val init: Either[TypeError, (Subst, List[T])] = Right((subst, recvType :: argTypes))
+        for
+          (sAll, allArgs) <- init
+          fT <- env.lookup(name).map(inst).toRight(TypeError.Mismatch(T.TVar(-1), T.TVar(-2)))
+          beta = fresh()
+          sFn <- Infer.unify(sAll.apply(fT), T.TFun(allArgs.map(sAll.apply), beta))
+        yield Result(sFn.compose(sAll), sFn.apply(beta))
+      }
+    }
+
+  private def unifyOptionalArg(base: Subst, args: List[T], index: Int, expected: T): Either[TypeError, Subst] =
+    args.lift(index).map(arg => Infer.unify(base.apply(arg), base.apply(expected))).getOrElse(Right(base))
 
   extension (s: Subst) def applyTo(env: Env): Env =
     Env(env.table.view.mapValues { sch =>
