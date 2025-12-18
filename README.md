@@ -1,8 +1,10 @@
-# treep 言語
+# TreeP 言語
+
+![TreeP Logo](./imgs/treep.png)
 
 ![Build Status](https://github.com/kmizu/treep/actions/workflows/ci.yml/badge.svg)
 
-treep は、表層構文 → EAST 正規化 → マクロ展開 → HM 型推論 → インタプリタ実行という学習しやすいパイプラインを備えたミニ言語です。Scala 3 で実装されており、ファイル拡張子は `.treep` を利用します。
+TreePは表層構文 → EAST 正規化 → マクロ展開 → HM 型推論 → インタプリタ実行という学習しやすいパイプラインを備えたミニ言語です。Scala 3 で実装されており、ファイル拡張子は `.treep` を利用します。
 
 ---
 
