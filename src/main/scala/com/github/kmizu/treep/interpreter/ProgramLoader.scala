@@ -6,24 +6,29 @@ import com.github.kmizu.treep.interpreter.Values.*
 
 object ProgramLoader:
   def loadProgram(program: Element, evaluator: Evaluator): Env =
-    var env = Env.empty
+    val env = Env.empty
 
-    def evalTop(el: Element): Unit = el.kind match
+    // 1) Register all function definitions first so const initializers can call them.
+    def registerDefs(el: Element): Unit = el.kind match
       case "def" =>
         val fname = el.name.getOrElse(throw MissingAttribute("name", "function definition"))
         val params = el.getAttr("params").filter(_.nonEmpty)
           .map(ParamParser.parseParamNames)
           .getOrElse(Nil)
         env.set(fname, VFunc(params, el.children.headOption.getOrElse(Element("block")), env))
+      case "module" => el.children.foreach(registerDefs)
+      case _ => ()
+
+    // 2) Evaluate const declarations in source order.
+    def evalConsts(el: Element): Unit = el.kind match
       case "const" =>
         val cname = el.name.getOrElse(throw MissingAttribute("name", "const declaration"))
         val init = el.getChild("init").getOrElse(Element("unit"))
         val v = evaluator.evalExpr(env, init)
         env.set(cname, v)
-      case "module" => el.children.foreach(evalTop)
-      case "struct" => ()
+      case "module" => el.children.foreach(evalConsts)
       case _ => ()
 
-    program.children.foreach(evalTop)
+    program.children.foreach(registerDefs)
+    program.children.foreach(evalConsts)
     env
-

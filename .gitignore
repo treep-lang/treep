@@ -4,6 +4,8 @@ project/target/
 .bloop/
 .metals/
 .idea/
+.sbt/
+.coursier/
 out/
 node_modules/
 .env
