@@ -22,11 +22,11 @@ private[parser] final class ParserImpl(tokens: Vector[Token], fileName: String):
     throw e
 
   private def synchronizeTop(): Unit =
-    val sync = Set("DEF", "CONST", "MODULE", "EXTENSION", "MACRO", "EOF")
+    val sync = Set("DEF", "CONST", "MODULE", "STRUCT", "EXTENSION", "MACRO", "EOF")
     while !sync.contains(cur.kind) do i += 1
 
   private def synchronizeStmt(): Unit =
-    val starters = Set("LET", "RETURN", "IF", "WHILE", "FOR", "}", "EOF")
+    val starters = Set("LET", "RETURN", "IF", "WHILE", "FOR", "MATCH", "}", "EOF")
     while !starters.contains(cur.kind) do i += 1
 
   def program(): Program =

@@ -108,7 +108,10 @@ object HM:
       Result(s1, tT) <- inferExprInternal(env, tE)
       Result(s2, tK) <- inferExprInternal(s1.applyTo(env), kE)
       tv = fresh()
-      tryDict = Infer.unify(s2.apply(tT), T.TDict(T.TString, tv)).flatMap { sD => Infer.unify(sD.apply(tK), T.TString).map(sK => sK.compose(sD)) }
+      tk = fresh()
+      tryDict = Infer.unify(s2.apply(tT), T.TDict(tk, tv)).flatMap { sD =>
+        Infer.unify(sD.apply(tK), sD.apply(tk)).map(sK => sK.compose(sD))
+      }
       res <- tryDict.orElse {
         for sL <- Infer.unify(s2.apply(tT), T.TList(tv)); sK <- Infer.unify(sL.apply(tK), T.TInt) yield sK.compose(sL)
       }
@@ -240,7 +243,6 @@ object HM:
         case "split"           => inferStringSplit(sArgs, recvType, argTypes)
         case "substring"       => inferStringSubstring(sArgs, recvType, argTypes)
         case "contains"        => inferStringContains(sArgs, recvType, argTypes)
-        case "join"            => inferListJoin(sArgs, recvType, argTypes)
         case _                 => inferMethodFallback(env, name, sArgs, recvType, argTypes)
     }
 
@@ -372,13 +374,6 @@ object HM:
     withString(subst, recv) { sString =>
       unifyOptionalArg(sString, args, 0, T.TString).map { sNeedle =>
         Result(sNeedle, T.TBool)
-      }
-    }
-
-  private def inferListJoin(subst: Subst, recv: T, args: List[T]): InferResult =
-    withList(subst, recv) { (sList, _) =>
-      unifyOptionalArg(sList, args, 0, T.TString).map { sDelim =>
-        Result(sDelim, T.TString)
       }
     }
 
