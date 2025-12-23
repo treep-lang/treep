@@ -218,6 +218,11 @@ sbt "run run samples/macro_when.treep"       # x is positive, x equals 5 と出�
 
 ## 標準ライブラリ早見表
 
+### 文字列
+| レシーバ | 主なメソッド |
+| --- | --- |
+| `String` | `length()`, `split(delim)`, `substring(start, end)`, `contains(substr)` |
+
 ### コレクション
 | レシーバ | 主なメソッド |
 | --- | --- |
@@ -225,9 +230,13 @@ sbt "run run samples/macro_when.treep"       # x is positive, x equals 5 と出�
 | `Dict[K,V]` | `size()`, `keys()`, `values()`, `entries()`, `hasKey(k)`, `get(k)`, `getOrElse(k, d)`, `put(k, v)`, `remove(k)`, `iter()` |
 | `Iter[T]` | `hasNext()`, `next()`, `toList()` |
 
-### タプル・補助
-- `fst((A,B))`, `snd((A,B))`
-- `print(value)`, `println(value)` — どの値でも表示可能。戻り値は `Unit` (`()` 表記)。
+### 関数
+- `iter(x)` — `List` / `Dict` を `Iter` に変換
+- `hasNext(it)`, `next(it)` — `Iter` 操作
+- `push(xs, v)`, `keys(dict)`, `hasKey(dict, k)` — 関数版のユーティリティ
+- `fst((A,B))`, `snd((A,B))` — タプル補助
+- `abs(n)`, `min(a, b)`, `max(a, b)`, `pow(base, exp)` — 数値
+- `print(value)`, `println(value)` — どの値でも表示可。戻り値は `Unit` (`()` 表記)
 
 ---
 
